@@ -139,6 +139,11 @@
   --duration-base: 200ms;
   --duration-slow: 300ms;
   --duration-panel: 300ms;
+  /* How long the sign-in intro plays before it settles (AuthStage reads it; a theme that
+     plays its own splash screens raises it — theme-legacy.css). Unitless milliseconds. */
+  --login-intro-ms: 1400;
+  /* A theme may also name the area the region picker selects by itself through
+     --login-default-zone (a zone id, read by LoginScreen); unset here: the picker waits. */
 
   /* ---- Layout — HUD Overlay System ---- */
   --topbar-bg: rgba(12, 13, 16, 0.7); /* not a top bar — the ChatStrip panel's glass fill (ChatStrip.module.css) */

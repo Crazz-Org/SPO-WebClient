@@ -95,4 +95,30 @@
 
   /* ---- The ChatStrip panel fill (see design-tokens.css) ---- */
   --topbar-bg: rgba(47, 87, 79, 0.9);
+
+  /* ---- Logon screen — read from the original client's form (LogonHandlerViewer.dfm) and
+     logon.css; used only by the legacy-scoped rules in the login stylesheets ---- */
+  --legacy-font: Verdana, Tahoma, Arial, sans-serif;
+  --legacy-frame: #395850;        /* TFramedButton.FrameColor 5265721 */
+  --legacy-note: #6ba292;         /* lbWelcome / Label4 Font.Color 9609323 */
+  --legacy-list-bg: #002800;      /* WorldList.Color 10240 */
+  --legacy-list-text: #00ff00;    /* WorldList.Font.Color clLime */
+  --legacy-list-selected: #000080; /* the Windows row highlight of a RowSelect list */
+
+  /* The original intro: the Oceanus page for 70 ticks of 50 ms, then the splash until a
+     click (or 400 ticks). 8 s here, 3.5 of them on the Oceanus page; any click skips. */
+  --login-intro-ms: 8000;
+  /* The Universe Map opened with its first area loaded; here that is Free Space. */
+  --login-default-zone: free;
+
+  /* ---- Universe Map (UniversalMapViewer.dfm) ---- */
+  --legacy-umap-gradient-to: #243934; /* GradientBox1.ToColor 3422500; also the TVFilter line */
+  --legacy-umap-title: #ffffd9;       /* lbName.Font.Color 14286847 */
+  --legacy-umap-label: #5e9384;       /* Label11.Font.Color 8688478 */
+  --legacy-umap-tab-text: #609686;    /* Tabs.Font.Color 8820064 */
+  --legacy-umap-tab-selected: #f3ff95; /* Tabs.SelTextColor 9829363 */
+  --legacy-umap-panel: #20332f;       /* Panel3.Color 3093280 */
+  --legacy-ticker-bg: #0f1f1b;        /* BlockTicker.ShowBack over black */
+  --legacy-ticker-text: #0fb0a0;      /* Ticker.ForeColor 10530831 */
+  --legacy-ticker-lit: #33ffe0;       /* Ticker.LitColor 14745395 */
 }

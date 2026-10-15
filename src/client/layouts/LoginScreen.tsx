@@ -30,6 +30,18 @@ function parseForceWorld(value: string | undefined): { zoneId: string; worldName
 
 const forceWorldConfig = parseForceWorld(config.server.forceWorld);
 
+/**
+ * The area the region picker selects by itself, named by a theme through the
+ * `--login-default-zone` token — the legacy theme says `free`, so its Universe Map opens
+ * with Free Space loaded as the original client did. Unset (every other theme, jsdom): the
+ * picker waits for a click. Read once per LoginScreen mount.
+ */
+function defaultZoneId(): string | undefined {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return undefined;
+  const id = getComputedStyle(document.documentElement).getPropertyValue('--login-default-zone').trim();
+  return WORLD_ZONES.some((z) => z.id === id) ? id : undefined;
+}
+
 export function LoginScreen() {
   const status = useGameStore((s) => s.status);
   const stage = useGameStore((s) => s.loginStage);
@@ -56,6 +68,9 @@ export function LoginScreen() {
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
   const [selectedWorld, setSelectedWorld] = useState('');
   const lastZoneRef = useRef<WorldZone | null>(null);
+  // The theme's default area, offered to the picker until any area is chosen (by it or by a
+  // click) — never when SPO_FORCE_WORLD already drives the stages.
+  const autoZoneRef = useRef<string | undefined>(forceWorldConfig ? undefined : defaultZoneId());
 
   // Stage A: validate credentials via RDO auth check, then advance to zones on success
   const handleConnect = useCallback(
@@ -76,11 +91,21 @@ export function LoginScreen() {
   const handleZoneSelect = useCallback(
     (zone: WorldZone) => {
       if (!storedCreds) return;
+      autoZoneRef.current = undefined;
       lastZoneRef.current = zone;
       setLoginLoading(true);
       client.onDirectoryConnect(storedCreds.username, storedCreds.password, zone.path);
     },
     [client, storedCreds, setLoginLoading],
+  );
+
+  // The legacy Universe Map's tabs switch area in place, without the picker in between.
+  const handleZoneSelectById = useCallback(
+    (zoneId: string) => {
+      const zone = WORLD_ZONES.find((z) => z.id === zoneId);
+      if (zone) handleZoneSelect(zone);
+    },
+    [handleZoneSelect],
   );
 
   // Stage C: retry the last directory query after an empty/failed world list
@@ -154,7 +179,7 @@ export function LoginScreen() {
   }, [setLoginStage]);
 
   return (
-    <div className={styles.screen}>
+    <div className={styles.screen} data-stage={visibleStage}>
       <LoginBackground />
 
       {visibleStage === 'auth' && (
@@ -173,12 +198,15 @@ export function LoginScreen() {
         <ZoneStage
           onSelect={handleZoneSelect}
           isLoading={isLoading}
+          autoSelectZoneId={autoZoneRef.current}
         />
       )}
 
       {visibleStage === 'worlds' && (
         <WorldStage
           worlds={worlds}
+          zoneId={lastZoneRef.current?.id}
+          onSelectZone={handleZoneSelectById}
           onSelect={handleWorldSelect}
           onBack={handleBackToZones}
           onRetry={handleRetryWorlds}

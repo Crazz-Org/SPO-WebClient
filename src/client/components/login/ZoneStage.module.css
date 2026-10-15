@@ -99,3 +99,145 @@
     padding: var(--space-4);
   }
 }
+
+/* ============================================================================
+ * Legacy theme — the original client's Universe Map before an area is chosen
+ * (UniversalMapViewer.dfm; see WorldStage.module.css for the measurements). The three
+ * zone cards become the area tabs, in the original's order — Free Space, Restricted
+ * Space, Beta; the list is empty, the ticker shows its welcome line, the button panel
+ * waits. The "Universe Map" header is drawn by LoginScreen.module.css.
+ * ============================================================================ */
+
+:global([data-theme="legacy"]) .stage {
+  position: fixed;
+  top: 51px;
+  left: 0;
+  z-index: 1;
+  display: block;
+  width: 336px;
+  max-width: none;
+  height: calc(100vh - 51px);
+  padding: 0;
+  margin: 0;
+  background: #000;
+  border-right: 1px solid var(--legacy-frame);
+  font-family: var(--legacy-font);
+  animation: none;
+}
+
+/* Tabs */
+:global([data-theme="legacy"]) .grid {
+  position: absolute;
+  top: 0;
+  left: 0;
+  flex-direction: row;
+  width: 337px;
+  height: 16px;
+  box-sizing: border-box;
+  padding: 4px 1px 0;
+  gap: 2px;
+  background: linear-gradient(to bottom, var(--legacy-umap-gradient-to), var(--legacy-frame));
+  border-bottom: 1px solid var(--legacy-frame);
+}
+
+:global([data-theme="legacy"]) .zoneCard {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  height: 11px;
+  padding: 0;
+  background: #000;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 100%, 0 100%);
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .zoneCard:hover {
+  transform: none;
+  box-shadow: none;
+  border: 0;
+}
+
+/* WORLD_ZONES lists beta first; the original strip reads Free Space, Restricted Space, Beta */
+:global([data-theme="legacy"]) .zoneCard:nth-child(1) { order: 3; }
+:global([data-theme="legacy"]) .zoneCard:nth-child(2) { order: 1; }
+:global([data-theme="legacy"]) .zoneCard:nth-child(3) { order: 2; }
+
+:global([data-theme="legacy"]) .zoneName {
+  color: var(--legacy-umap-tab-text);
+  font: 8px var(--legacy-font);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+:global([data-theme="legacy"]) .zoneCard:hover .zoneName {
+  color: #fff;
+}
+
+:global([data-theme="legacy"]) .zoneDesc {
+  display: none;
+}
+
+/* Label11 */
+:global([data-theme="legacy"]) .title {
+  position: absolute;
+  top: 26px;
+  left: 10px;
+  width: 316px;
+  height: 20px;
+  margin: 0;
+  padding-left: 4px;
+  box-sizing: border-box;
+  font-size: 0;
+  text-align: left;
+}
+
+:global([data-theme="legacy"]) .title::after {
+  content: attr(data-legacy-text);
+  font: 11px Arial, var(--legacy-font);
+  line-height: 20px;
+  color: var(--legacy-umap-label);
+}
+
+/* Ticker — the welcome line */
+:global([data-theme="legacy"]) .subtitle {
+  position: absolute;
+  left: 10px;
+  bottom: 59px;
+  width: 316px;
+  height: 120px;
+  margin: 0;
+  padding: 7px;
+  box-sizing: border-box;
+  background: var(--legacy-ticker-bg);
+  font-size: 0;
+  text-align: left;
+}
+
+:global([data-theme="legacy"]) .subtitle::after {
+  content: attr(data-legacy-text);
+  color: var(--legacy-ticker-text);
+  font: bold 11px / 15px var(--legacy-font);
+}
+
+/* Panel3 — empty until worlds are listed */
+:global([data-theme="legacy"]) .stage::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  width: 316px;
+  height: 49px;
+  background: var(--legacy-umap-panel);
+}
+
+:global([data-theme="legacy"]) .overlay {
+  border-radius: 0;
+  backdrop-filter: none;
+  background: rgba(0, 0, 0, 0.6);
+}
