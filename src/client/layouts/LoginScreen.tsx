@@ -68,9 +68,11 @@ export function LoginScreen() {
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
   const [selectedWorld, setSelectedWorld] = useState('');
   const lastZoneRef = useRef<WorldZone | null>(null);
-  // The theme's default area, offered to the picker until any area is chosen (by it or by a
-  // click) — never when SPO_FORCE_WORLD already drives the stages.
+  // The theme's default area, offered to the picker until a world list has arrived (the
+  // picker retries it once on a failed directory query) — never when SPO_FORCE_WORLD already
+  // drives the stages.
   const autoZoneRef = useRef<string | undefined>(forceWorldConfig ? undefined : defaultZoneId());
+  if (stage === 'worlds' || stage === 'companies') autoZoneRef.current = undefined;
 
   // Stage A: validate credentials via RDO auth check, then advance to zones on success
   const handleConnect = useCallback(
@@ -91,7 +93,6 @@ export function LoginScreen() {
   const handleZoneSelect = useCallback(
     (zone: WorldZone) => {
       if (!storedCreds) return;
-      autoZoneRef.current = undefined;
       lastZoneRef.current = zone;
       setLoginLoading(true);
       client.onDirectoryConnect(storedCreds.username, storedCreds.password, zone.path);

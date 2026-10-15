@@ -30,15 +30,38 @@ const ZONE_DESCRIPTIONS: Record<string, string> = {
   restricted: 'Competitive zone — advanced rules and limited resources',
 };
 
+/**
+ * The automatic pick waits this long after the stage shows: the sign-in has just closed its
+ * Directory Server session, and a second connection opened in the same instant timed out on
+ * the live DS (gateway log 2026-10-15, `directory_query socket … not connected after
+ * 10000 ms`). A player clicking a region never hits that window.
+ */
+export const AUTO_SELECT_DELAY_MS = 1000;
+/** One quiet retry when the automatic pick fails; after that the player clicks. */
+export const AUTO_SELECT_ATTEMPTS = 2;
+
 export function ZoneStage({ onSelect, isLoading, autoSelectZoneId }: ZoneStageProps) {
-  const autoFired = useRef(false);
+  const autoAttempts = useRef(0);
+  const userPicked = useRef(false);
   useEffect(() => {
-    if (autoFired.current || !autoSelectZoneId || isLoading) return;
+    if (!autoSelectZoneId || isLoading || userPicked.current) return;
+    if (autoAttempts.current >= AUTO_SELECT_ATTEMPTS) return;
     const zone = WORLD_ZONES.find((z) => z.id === autoSelectZoneId);
     if (!zone) return;
-    autoFired.current = true;
-    onSelect(zone);
+    // A retry waits a little longer than the first try.
+    const delay = AUTO_SELECT_DELAY_MS * (autoAttempts.current + 1);
+    const timer = setTimeout(() => {
+      if (userPicked.current) return;
+      autoAttempts.current += 1;
+      onSelect(zone);
+    }, delay);
+    return () => clearTimeout(timer);
   }, [autoSelectZoneId, isLoading, onSelect]);
+
+  const pick = (zone: WorldZone) => {
+    userPicked.current = true;
+    onSelect(zone);
+  };
 
   return (
     <div className={styles.stage}>
@@ -59,7 +82,7 @@ export function ZoneStage({ onSelect, isLoading, autoSelectZoneId }: ZoneStagePr
           <GlassCard
             key={zone.id}
             className={styles.zoneCard}
-            onClick={() => !isLoading && onSelect(zone)}
+            onClick={() => !isLoading && pick(zone)}
           >
             <span className={styles.zoneName}>{zone.name}</span>
             <span className={styles.zoneDesc}>
