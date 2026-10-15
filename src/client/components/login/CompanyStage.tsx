@@ -5,7 +5,7 @@
  * Company cards grouped by role + "Create New Company" ghost card.
  */
 
-import { useMemo } from 'react';
+import { useMemo, type CSSProperties } from 'react';
 import { GlassCard } from '../common';
 import { Plus, ArrowLeft, Eye } from 'lucide-react';
 import type { CompanyInfo, LoginPageOutcome, WorldAdmission } from '@/shared/types';
@@ -288,6 +288,12 @@ export function CompanyStage({
         </>
       )}
 
+      {/* The company table of the legacy theme (four to a row, centred); a plain wrapper,
+          laid out as if absent, in every other theme */}
+      <div
+        className={styles.companyTable}
+        style={{ '--company-cols': Math.min(4, owned.length + political.length) } as CSSProperties}
+      >
       {/* Player-owned companies */}
       {owned.length > 0 && (
         <section className={styles.section}>
@@ -352,6 +358,7 @@ export function CompanyStage({
           </div>
         </section>
       )}
+      </div>
 
       {/* Create new company — withheld when the server already said NewCompany would fail,
           when the account is at its world limit, or when the account is a minister

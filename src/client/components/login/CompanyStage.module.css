@@ -236,21 +236,28 @@
   display: none;
 }
 
+/* The legacy theme's company table — no box of its own elsewhere */
+.companyTable {
+  display: contents;
+}
+
 /* ============================================================================
  * Legacy theme — the original NewLogon pages as the Universe Map opens them beside itself
  * (chooseCompany.asp with Logon=FALSE, so voyager.css; chooseVisa.asp): the map stays on
  * the left (LoginScreen / WorldStage), the page fills the rest of the window.
  *
- *   body       black, margin-top 20 px, padding-left 20 px
+ *   body       black, margin-top 20 px, padding-left 20 px — and here 20 px on the right too,
+ *              so the notices do not run into the window edge
  *   notice     the new logo (150 px) and the community notices, centred, orange: 16 px, then
  *              14 px; the Discord link white, bold 18 px; an <hr> under them
  *   .header2   "Companies" — Tahoma bold 11 pt #ff9900
- *   .value     Arial 10 pt white, 20 px in, 10 px down: "You have registered the following
+ *   .value     Arial 10 pt white, 10 px down (centred here with the heading, at the user's
+ *              request; the original set both at the left): "You have registered the following
  *              companies in <world>." / "Choose one from the list or create a new one."
  *   .comment   Tahoma bold 10 pt #ff9900, margin-left 70 px — the visa text (50 px down)
- *   table      centred, 25 px down, four companies to a row (ColNum = 4) — the page is a CSS
- *              grid of four auto columns, so a short last row starts at the left as a table
- *              row does; a cell is bottom-aligned with a 2 px black border that turns #3A5950
+ *   table      centred, 25 px down, four companies to a row (ColNum = 4) — .companyTable, a
+ *              grid of up to four auto columns, so a short last row starts at the left as a
+ *              table row does; a cell is bottom-aligned with a 2 px black border that turns #3A5950
  *              under the pointer (FrameButtons.js): the cluster seal comp-<cluster>.gif, the
  *              name (.header3, Tahoma bold 12 pt #ff9900) and .data lines (Arial 10 pt
  *              white): Private or the office, N Facilities
@@ -265,16 +272,14 @@
  * ============================================================================ */
 
 :global([data-theme="legacy"]) .stage {
-  display: grid;
-  grid-template-columns: repeat(4, auto);
-  justify-content: center;
-  align-items: end;
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
   gap: 0;
   width: 100%;
   max-width: none;
   margin: 0;
-  padding: 20px 0 40px 20px;
+  padding: 20px 20px 40px;
   box-sizing: border-box;
   font-family: Tahoma, Verdana, Arial, sans-serif;
   animation: none;
@@ -295,7 +300,7 @@
 :global([data-theme="legacy"]) .emptyMessage,
 :global([data-theme="legacy"]) .denialMessage,
 :global([data-theme="legacy"]) .stage > .grid {
-  grid-column: 1 / -1;
+  flex: none;
 }
 
 :global([data-theme="legacy"]) .legacyNotice {
@@ -341,14 +346,15 @@
 :global([data-theme="legacy"]) .header {
   display: block;
   margin: 10px 0 25px;
+  text-align: center;
 }
 
 :global([data-theme="legacy"]) .header[data-legacy-text]::after {
   content: attr(data-legacy-text);
   display: block;
-  margin: 10px 0 0 20px;
+  margin: 10px 0 0;
   white-space: pre-line;
-  text-align: left;
+  text-align: center;
   color: #fff;
   font: 13.33px / 1.2 Arial, sans-serif;
 }
@@ -390,6 +396,14 @@
 :global([data-theme="legacy"]) .section,
 :global([data-theme="legacy"]) .section > .grid {
   display: contents;
+}
+
+/* The table itself: as many columns as companies, up to four, the whole of it centred */
+:global([data-theme="legacy"]) .companyTable {
+  display: grid;
+  grid-template-columns: repeat(var(--company-cols, 4), auto);
+  justify-content: center;
+  align-items: end;
 }
 
 :global([data-theme="legacy"]) .companyCard {
@@ -525,4 +539,9 @@
   border-radius: 0;
   backdrop-filter: none;
   background: rgba(0, 0, 0, 0.6);
+}
+
+/* "Companies" and its lines centred over the table (the original's sat at the left edge) */
+:global([data-theme="legacy"]) .header .title[data-legacy-text] {
+  text-align: center;
 }
