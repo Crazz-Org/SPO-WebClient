@@ -200,6 +200,8 @@ function parseClusterFacilities(ctx: SessionContext, html: string): ClusterFacil
     // Extract zone type from zone image title
     const zoneMatch = /<img[^>]*zone[^>]*title\s*=\s*["']([^"']+)["']/i.exec(block);
     const zoneType = zoneMatch?.[1] || '';
+    // …and the picture itself — the tooltip cannot tell it apart, strBlueZone titles three
+    const zoneKind = /<img[^>]*src\s*=\s*["']?[^"'\s>]*zone-([a-z]+)\.gif/i.exec(block)?.[1]?.toLowerCase() ?? '';
 
     // Extract price and surface from the second comment div (smaller font) —
     // `NewLogon/FacilityList.asp:225-228`, `ImportPrice` then `Size`.
@@ -210,8 +212,14 @@ function parseClusterFacilities(ctx: SessionContext, html: string): ClusterFacil
       const metaText = metaMatch[1];
       const costMatch = /(\$[\d,]+\.?\d*\s*[KM]?)/i.exec(metaText);
       cost = costMatch?.[1] || '';
-      const areaMatch = /<nobr>([\d,]+\s*m\.)<\/nobr>/i.exec(metaText);
-      area = areaMatch?.[1] || '';
+      // `3600 m.` on the old pages, `3600 m²` on the live ones — whose ² is a Windows-1252
+      // byte that a UTF-8 read of the page turns into U+FFFD, so any one character after the
+      // m is taken for it
+      const areaMatch = /<nobr>\s*([\d,.]+)\s*m(&sup2;|[^\s<])?\s*<\/nobr>/i.exec(metaText);
+      if (areaMatch) {
+        const unit = areaMatch[2] === undefined ? 'm' : areaMatch[2] === '.' ? 'm.' : 'm²';
+        area = `${areaMatch[1]} ${unit}`;
+      }
     }
 
     // Extract description
@@ -221,7 +229,7 @@ function parseClusterFacilities(ctx: SessionContext, html: string): ClusterFacil
       description = descMatch[1].replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]+>/g, '').trim();
     }
 
-    facilities.push({ name, iconUrl, cost, area, zoneType, description });
+    facilities.push({ name, iconUrl, cost, area, zoneType, zoneKind, description });
   }
 
   ctx.log.debug(`[ClusterBrowse] Parsed ${facilities.length} facility previews`);

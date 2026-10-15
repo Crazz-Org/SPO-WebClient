@@ -142,4 +142,23 @@ describe('MapLoadingScreen', () => {
     });
     expect(container.querySelector('[class*="exiting"]') ?? container.firstChild).toBeTruthy();
   });
+
+  // The legacy theme's cover (Voyager/Cover.dfm) reads these; other themes hide the block.
+  it('names the world and the current step for the legacy cover', () => {
+    useGameStore.setState({
+      worldName: 'Shamba',
+      mapLoading: { active: true, progress: 0.3, message: 'Building data ready...' },
+    });
+    const { container } = renderWithProviders(<MapLoadingScreen />);
+    expect(screen.getByText('Shamba')).toBeTruthy();
+    expect(screen.getByText('Building data ready...')).toBeTruthy();
+    const gauge = container.querySelector<HTMLElement>('[class*="legacyGauge"]');
+    expect(gauge?.style.getPropertyValue('--map-loading-progress')).toBe('30%');
+  });
+
+  it('says "Please wait..." before the first step is named', () => {
+    useGameStore.setState({ mapLoading: { active: true, progress: 0, message: '' } });
+    renderWithProviders(<MapLoadingScreen />);
+    expect(screen.getByText('Please wait...')).toBeTruthy();
+  });
 });

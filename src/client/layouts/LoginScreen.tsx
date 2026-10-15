@@ -132,7 +132,10 @@ export function LoginScreen() {
   // company is being entered
   const handleWorldReselect = useCallback(
     (worldName: string) => {
-      if (!isLoading) handleWorldSelect(worldName);
+      if (isLoading) return;
+      // The company creation page beside the map gives way, as the original's web view did
+      if (useUiStore.getState().modal === 'createCompany') useUiStore.getState().closeModal();
+      handleWorldSelect(worldName);
     },
     [isLoading, handleWorldSelect],
   );

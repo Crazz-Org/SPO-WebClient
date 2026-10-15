@@ -5,7 +5,7 @@
  * Managed by ui-store modal state ('createCompany').
  */
 
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { Fragment, useState, useCallback, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useUiStore } from '../../store/ui-store';
 import { useGameStore } from '../../store/game-store';
@@ -23,6 +23,21 @@ import type { ClusterId } from '@/shared/cluster-data';
 import type { ClusterCategory } from '@/shared/types';
 import { Skeleton } from '../common/Skeleton';
 import styles from './CompanyCreationModal.module.css';
+
+/**
+ * The legacy theme's tab edges — toptabs.asp draws a 10 px picture between two tabs and at
+ * both ends, chosen by where the selected tab is (updateTabImages): tab1/tab2 open the strip
+ * before a selected/plain first tab, tab3 leads into the selected tab, tab6 leads out of
+ * it, tab7 sits between two plain ones, tab4/tab5 close it after a selected/plain last tab.
+ * Edge `i` stands before tab `i`; edge `count` closes the strip.
+ */
+function tabEdge(i: number, count: number, selected: number): string {
+  if (i === 0) return selected === 0 ? 'tab1' : 'tab2';
+  if (i === count) return selected === count - 1 ? 'tab4' : 'tab5';
+  if (selected === i) return 'tab3';
+  if (selected === i - 1) return 'tab6';
+  return 'tab7';
+}
 
 export function CompanyCreationModal() {
   const modal = useUiStore((s) => s.modal);
@@ -66,6 +81,14 @@ export function CompanyCreationModal() {
       }
     }
   }, [modal]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The company exists and the world is being entered: give way to the loading screen, which
+  // sits under the modal layer. Waiting for onCreateCompanySubmit to settle kept this page up,
+  // stretched over the login screen that had already left, for the whole map load.
+  const enteringWorld = useGameStore((s) => s.mapLoading.active);
+  useEffect(() => {
+    if (enteringWorld && modal === 'createCompany') closeModal();
+  }, [enteringWorld, modal, closeModal]);
 
   // When cluster info arrives and we have no selected category, pick the first one
   useEffect(() => {
@@ -151,7 +174,11 @@ export function CompanyCreationModal() {
       <div className={styles.modal} role="dialog" aria-label="Create New Company" onKeyDown={handleKeyDown}>
         {/* Header */}
         <div className={styles.header}>
-          <h2 className={styles.title}>Create New Company</h2>
+          {/* data-legacy-text: toptabs.asp's strCreateCompany (strAssociateWith follows it
+              in the legacy stylesheet) */}
+          <h2 className={styles.title} data-legacy-text="Create Company">
+            Create New Company
+          </h2>
           <button className={styles.closeBtn} onClick={handleCancel} aria-label="Close">
             <X size={18} />
           </button>
@@ -159,19 +186,33 @@ export function CompanyCreationModal() {
 
         {/* Cluster tabs */}
         <div className={styles.clusterTabs}>
-          {clusters.map((id) => {
+          {clusters.map((id, i) => {
             const locked = id === 'Magna' && magnaLocked;
             return (
-              <button
-                key={id}
-                className={`${styles.clusterTab} ${id === selectedCluster ? styles.clusterTabActive : ''} ${locked ? styles.clusterTabLocked : ''}`}
-                onClick={() => handleClusterTabClick(id)}
-                title={locked ? MAGNA_REFUSAL : undefined}
-              >
-                {CLUSTER_DISPLAY_NAMES[id as ClusterId] ?? id}
-              </button>
+              <Fragment key={id}>
+                {/* The legacy theme's tab edge pictures; hidden in every other theme */}
+                <span
+                  className={styles.tabEdge}
+                  data-edge={tabEdge(i, clusters.length, clusters.indexOf(selectedCluster))}
+                  aria-hidden="true"
+                />
+                <button
+                  className={`${styles.clusterTab} ${id === selectedCluster ? styles.clusterTabActive : ''} ${locked ? styles.clusterTabLocked : ''}`}
+                  onClick={() => handleClusterTabClick(id)}
+                  title={locked ? MAGNA_REFUSAL : undefined}
+                >
+                  {CLUSTER_DISPLAY_NAMES[id as ClusterId] ?? id}
+                </button>
+              </Fragment>
             );
           })}
+          {clusters.length > 0 && (
+            <span
+              className={styles.tabEdge}
+              data-edge={tabEdge(clusters.length, clusters.length, clusters.indexOf(selectedCluster))}
+              aria-hidden="true"
+            />
+          )}
         </div>
 
         {/* Two-column body */}
@@ -234,10 +275,14 @@ export function CompanyCreationModal() {
                       <span className={styles.facilityDesc}>{fac.description}</span>
                     )}
                     {fac.zoneType && (
-                      <span className={styles.facilityDesc}>{fac.zoneType}</span>
+                      <span className={`${styles.facilityDesc} ${styles.facilityZoneText}`}>{fac.zoneType}</span>
                     )}
                   </div>
                   <div className={styles.facilityMeta}>
+                    {/* The zone picture of the legacy theme, titled as FacilityList.asp titles it */}
+                    {fac.zoneKind && (
+                      <span className={styles.zoneIcon} data-zone={fac.zoneKind} title={fac.zoneType || undefined} />
+                    )}
                     {fac.cost && <span className={styles.facilityCost}>{fac.cost}</span>}
                     {/* CacheClass.Size — a ground surface in metres, never a duration
                         (NewLogon/FacilityList.asp:227). Renamed from `buildTime`. */}
@@ -261,7 +306,10 @@ export function CompanyCreationModal() {
               <div className={styles.refusal} role="status">{MAGNA_REFUSAL}</div>
             ) : (
               <>
+                {/* entername.asp's label, legacy theme only */}
+                <label className={styles.nameLabel} htmlFor="create-company-name">Company name :</label>
                 <input
+                  id="create-company-name"
                   ref={inputRef}
                   className={styles.nameInput}
                   type="text"
@@ -275,6 +323,7 @@ export function CompanyCreationModal() {
                   className={styles.submitBtn}
                   onClick={handleSubmit}
                   disabled={loading || !selectedCluster}
+                  data-legacy-text="OK"
                 >
                   {loading ? 'Creating...' : 'Create Company'}
                 </button>

@@ -296,6 +296,12 @@ export interface ClusterFacilityPreview {
   // (NewLogon/FacilityList.asp:227). Was named `buildTime` and displayed as one.
   area: string;                    // '3600 m.'
   zoneType: string;                // Zone tooltip text
+  /**
+   * The zone picture the page shows beside the icon, `images/zone-<kind>.gif`
+   * (NewLogon/FacilityList.asp:186-222): hires, midres, lores, industry, commerce,
+   * civics or offices; empty for a facility of no zone.
+   */
+  zoneKind?: string;
   description: string;             // Optional description
 }
 
