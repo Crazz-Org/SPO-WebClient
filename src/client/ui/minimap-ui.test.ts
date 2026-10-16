@@ -1062,4 +1062,91 @@ describe('MinimapUI under the legacy theme', () => {
     expect(calls[calls.length - 1]).toEqual([50, 50]);
     minimap.destroy();
   });
+
+  it('the + and - buttons zoom the small map without reaching the map below', () => {
+    const minimap = new MinimapUI();
+    minimap.setRenderer(createMockRenderer());
+    const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+    const buttons = wrapper.children.filter(c => (c as unknown as { textContent?: string }).textContent);
+    const e = { stopPropagation: jest.fn() };
+    for (const b of buttons) (b as unknown as { onclick: (ev: typeof e) => void }).onclick(e);
+    expect(e.stopPropagation).toHaveBeenCalledTimes(2);
+    minimap.destroy();
+  });
+
+  describe('resizing from the top and left borders', () => {
+    type Handler = (e: Record<string, unknown>) => void;
+    const doc = () =>
+      (globalThis as unknown as { document: { addEventListener: jest.Mock; removeEventListener: jest.Mock } }).document;
+    const docHandler = (type: string) => doc().addEventListener.mock.calls.find((c: unknown[]) => c[0] === type)![1] as Handler;
+
+    function setup() {
+      installWindow(1024, 768);
+      const minimap = new MinimapUI();
+      minimap.setRenderer(createMockRenderer());
+      const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+      (wrapper as unknown as { getBoundingClientRect: () => { left: number; top: number } }).getBoundingClientRect =
+        () => ({ left: 824, top: 529 });
+      const on = (type: string) => wrapper.addEventListener.mock.calls.find((c: unknown[]) => c[0] === type)![1] as Handler;
+      return { minimap, wrapper, mousedown: on('mousedown'), mousemove: on('mousemove') };
+    }
+
+    it('shows the resize cursor over each border only', () => {
+      const { minimap, wrapper, mousemove } = setup();
+      mousemove({ clientX: 900, clientY: 530 });
+      expect(wrapper.style.cursor).toBe('ns-resize');
+      mousemove({ clientX: 826, clientY: 560 });
+      expect(wrapper.style.cursor).toBe('ew-resize');
+      mousemove({ clientX: 900, clientY: 560 });
+      expect(wrapper.style.cursor).toBe('');
+      minimap.destroy();
+    });
+
+    it('the top border makes the frame taller, the left border wider, within limits', () => {
+      const { minimap, wrapper, mousedown } = setup();
+      const e = { clientX: 900, clientY: 530, preventDefault: jest.fn(), stopPropagation: jest.fn() };
+      mousedown(e);
+      expect(e.preventDefault).toHaveBeenCalled();
+      const move = docHandler('mousemove');
+      move({ clientX: 900, clientY: 480 });
+      expect(wrapper.style.cssText).toContain('height: 147px');
+      move({ clientX: 900, clientY: 2000 });
+      expect(wrapper.style.cssText).toContain('height: 60px');
+      const up = docHandler('mouseup');
+      up({});
+      expect(doc().removeEventListener).toHaveBeenCalledWith('mousemove', move);
+
+      doc().addEventListener.mockClear();
+      mousedown({ clientX: 826, clientY: 560, preventDefault: jest.fn(), stopPropagation: jest.fn() });
+      const moveLeft = docHandler('mousemove');
+      moveLeft({ clientX: 776, clientY: 560 });
+      expect(wrapper.style.cssText).toContain('width: 250px');
+      moveLeft({ clientX: -5000, clientY: 560 });
+      expect(wrapper.style.cssText).toContain('width: 924px');
+      minimap.destroy();
+    });
+
+    it('a press inside the frame is left to the map canvas', () => {
+      const { minimap, mousedown } = setup();
+      const e = { clientX: 900, clientY: 560, preventDefault: jest.fn(), stopPropagation: jest.fn() };
+      mousedown(e);
+      expect(e.preventDefault).not.toHaveBeenCalled();
+      minimap.destroy();
+    });
+  });
+
+  it('the canvas keeps a crosshair, and switching the theme back restores the diamond', () => {
+    installWindow(1024);
+    const minimap = new MinimapUI();
+    minimap.setRenderer(createMockRenderer());
+    const container = allElements.find(el => el.id === 'minimap-container')!;
+    const move = container.addEventListener.mock.calls.find((c: unknown[]) => c[0] === 'mousemove')![1] as (e: { offsetX: number; offsetY: number }) => void;
+    move({ offsetX: 1, offsetY: 1 });
+    expect(container.style.cursor).toBe('crosshair');
+    useUiStore.setState({ theme: 'empire' });
+    jest.advanceTimersByTime(600);
+    const wrapper = allElements.find(el => el.id === 'minimap-wrapper')!;
+    expect(wrapper.style.cssText).not.toContain('height: 97px');
+    minimap.destroy();
+  });
 });

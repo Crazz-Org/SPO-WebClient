@@ -8,6 +8,7 @@ import { renderWithProviders, resetStores, createSpiedCallbacks } from '../../..
 import { useChatStore } from '../../../store/chat-store';
 import { useGameStore } from '../../../store/game-store';
 import { useUiStore } from '../../../store/ui-store';
+import { useMapStore } from '../../../store/map-store';
 import { LegacyChatWindow } from './LegacyChatWindow';
 import { chatUserIcons, nobilityRank } from './legacy-chat-icons';
 import { LegacyGameChrome } from './LegacyGameChrome';
@@ -115,6 +116,51 @@ describe('LegacyChatWindow', () => {
     renderWithProviders(<LegacyChatWindow chatOverMap onToggleChatOverMap={() => {}} />);
     fireEvent.click(screen.getByText('Log'));
     expect(useUiStore.getState().modal).toBe('chatHistory');
+  });
+
+  it('joins on a double click, leaves back to the lobby, and opens Create Channel', () => {
+    const onJoinChannel = jest.fn();
+    renderWithProviders(<LegacyChatWindow chatOverMap onToggleChatOverMap={() => {}} />, {
+      clientCallbacks: createSpiedCallbacks({ onJoinChannel }),
+    });
+    expect((screen.getByText('Leave Channel') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.doubleClick(screen.getByText('Gundia'));
+    expect(useChatStore.getState().currentChannel).toBe('Gundia');
+    fireEvent.click(screen.getByText('Leave Channel'));
+    expect(onJoinChannel).toHaveBeenLastCalledWith('', undefined, 'Gundia');
+    expect(useChatStore.getState().currentChannel).toBe('Lobby');
+    fireEvent.click(screen.getByText('Create Channel'));
+    expect(useUiStore.getState().modal).toBe('createChannel');
+  });
+
+  it('the marquee announces a channel created while the window is open', () => {
+    renderWithProviders(<LegacyChatWindow chatOverMap onToggleChatOverMap={() => {}} />);
+    act(() => {
+      useChatStore.setState({ channels: [...useChatStore.getState().channels, { name: 'Trade', isProtected: false }] });
+    });
+    expect(screen.getByTitle('A NEW CHANNEL (TRADE) WAS CREATED.')).toBeTruthy();
+  });
+
+  it('keeps the / commands local', () => {
+    const onSendChatMessage = jest.fn();
+    const onChatAway = jest.fn();
+    const centerOn = jest.fn();
+    useMapStore.getState().setSource({ centerOn, getCameraPosition: () => ({ x: 0, y: 0 }) } as never);
+    renderWithProviders(<LegacyChatWindow chatOverMap onToggleChatOverMap={() => {}} />, {
+      clientCallbacks: createSpiedCallbacks({ onSendChatMessage, onChatAway }),
+    });
+    const input = screen.getByPlaceholderText('Enter chat text here...');
+    const say = (value: string) => {
+      fireEvent.change(input, { target: { value } });
+      fireEvent.keyDown(input, { key: 'Enter' });
+    };
+    say('/go 30,40');
+    expect(centerOn).toHaveBeenCalledWith(30, 40);
+    say('/go');
+    expect(useChatStore.getState().messages.Lobby?.at(-1)?.text).toBe('Usage: /go x,y');
+    say('/afk');
+    expect(onChatAway).toHaveBeenCalled();
+    expect(onSendChatMessage).not.toHaveBeenCalled();
   });
 });
 
