@@ -14,6 +14,7 @@ jest.mock('../shared/config', () => ({ config: { server: { bugReportMode: false 
 jest.mock('./version', () => ({ APP_VERSION: 't', BUILD_DATE: 't', BUILD_TIME: 't', BUILD_NUMBER: 't' }));
 jest.mock('./styles/design-tokens.css', () => ({}));
 jest.mock('./styles/design-tokens-v2.css', () => ({}));
+jest.mock('./styles/theme-legacy.css', () => ({}));
 jest.mock('./styles/reset.css', () => ({}));
 jest.mock('./styles/typography.css', () => ({}));
 jest.mock('./styles/animations.css', () => ({}));
