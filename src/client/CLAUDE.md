@@ -103,6 +103,17 @@ server path — and work on v2 never edits v1 files (`components/hud`, `sheet`, 
 every v2 fixed element is `display: none`. Its layout tokens are `--v2-*` in
 `styles/design-tokens-v2.css`, and its fixed elements are rows (`ui: 'v2'`) of the band table.
 
+## Visual themes
+
+Two palettes, one attribute: `<html data-theme="legacy">` turns on the original client's look
+(`styles/theme-legacy.css`), its absence is Corporate Empire (`styles/design-tokens.css`). The
+theme file only re-assigns colour, font, radius and shadow tokens that design-tokens.css already
+defines — never a layout token — so the band table holds in both. The choice lives in
+`useUiStore.theme` (Settings → Interface → Visual theme), persisted under `THEME_KEY`
+(`store/theme.ts`); a fresh browser takes `?theme=` from the URL (a channel's default, e.g. the
+desktop shell), then the gateway's `SPO_THEME`, then `empire`. New colours go in both files; a
+component never reads the attribute.
+
 ## Legacy images
 
 Cross-origin legacy images go through `/proxy-image`; the CSP blocks the rest and no test layer will tell you.

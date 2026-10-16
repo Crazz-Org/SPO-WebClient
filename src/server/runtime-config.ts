@@ -22,6 +22,8 @@ export interface RuntimeConfigInput {
   bugReportPlayerMode?: boolean;
   /** Registration page for "Create an account" on the sign-in screen; empty renders no action. */
   registerUrl?: string;
+  /** The visual theme a fresh browser starts with (`empire` | `legacy`); empty means no default. */
+  theme?: string;
 }
 
 export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
@@ -37,6 +39,9 @@ export function buildRuntimeConfigScript(input: RuntimeConfigInput): string {
   }
   if (input.registerUrl) {
     lines.push(`window.__SPO_REGISTER_URL__=${JSON.stringify(input.registerUrl)};`);
+  }
+  if (input.theme) {
+    lines.push(`window.__SPO_THEME__=${JSON.stringify(input.theme)};`);
   }
   return lines.join('\n');
 }

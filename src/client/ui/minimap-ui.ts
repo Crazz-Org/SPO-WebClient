@@ -74,6 +74,18 @@ const DIAMOND_PAD = 0.06;
 
 const COS45 = Math.SQRT2 / 2;
 
+// The legacy theme's SmallMapFrame (`MapIsoView.dfm` :916-1068, `MapIsoView.pas` :495-577): an
+// isometric rectangle pinned bottom-right on the map, above the 42 px StatusPanel and the
+// 100 px toolbar, 200 × 97 by default; its top (4 px) and left (6 px) borders drag to resize;
+// "+" bottom-left and "-" bottom-right zoom it (MS Sans Serif bold 16 px, #5E9384).
+const LEGACY_BOTTOM   = 142;
+const LEGACY_W        = 200;
+const LEGACY_H        = 97;
+const LEGACY_MIN_W    = 120;
+const LEGACY_MIN_H    = 60;
+const LEGACY_TOP_GRIP = 4;
+const LEGACY_LEFT_GRIP = 6;
+
 // ---------------------------------------------------------------------------
 // MinimapUI class
 // ---------------------------------------------------------------------------
@@ -121,6 +133,12 @@ export class MinimapUI {
     onMove: (e: MouseEvent) => void;
     onUp: () => void;
   } | null = null;
+
+  /** The legacy theme draws the original small map instead of the diamond. */
+  private legacy = false;
+  private legacyW = LEGACY_W;
+  private legacyH = LEGACY_H;
+  private legacyButtons: HTMLElement[] = [];
 
   constructor(private readonly onSettingsChange: ((partial: Partial<GameSettings>) => void) | null = null) {}
 
@@ -247,6 +265,12 @@ export class MinimapUI {
   private applyDockedStyle(display: 'block' | 'none'): void {
     if (!this.wrapper || !this.container) return;
 
+    if (this.legacy) {
+      this.applyLegacyStyle(display);
+      return;
+    }
+    this.restoreDiamondLook();
+
     this.wrapper.style.cssText = `
       position: fixed;
       top: ${DESKTOP_PAD}px;
@@ -268,6 +292,133 @@ export class MinimapUI {
     this.container.style.transform = '';
 
     this.applyPositioning();
+  }
+
+  /** The original small map: a black isometric rectangle bottom-right, with its zoom buttons. */
+  private applyLegacyStyle(display: 'block' | 'none'): void {
+    if (!this.wrapper || !this.container || !this.canvas) return;
+    this.wrapper.style.cssText = `
+      position: fixed;
+      right: 0;
+      bottom: ${LEGACY_BOTTOM}px;
+      width: ${this.legacyW}px;
+      height: ${this.legacyH}px;
+      box-sizing: border-box;
+      border-top: ${LEGACY_TOP_GRIP}px solid #000;
+      border-left: ${LEGACY_LEFT_GRIP}px solid #000;
+      background: #000;
+      overflow: hidden;
+      z-index: var(--z-dropdown, 100);
+      display: ${display};
+    `;
+    this.container.style.position = 'absolute';
+    this.container.style.inset = '0';
+    this.container.style.width = '';
+    this.container.style.height = '';
+    this.container.style.clipPath = 'none';
+    this.container.style.filter = 'none';
+    this.container.style.background = '#000';
+    this.container.style.transition = 'none';
+    const w = this.legacyW - LEGACY_LEFT_GRIP;
+    const h = this.legacyH - LEGACY_TOP_GRIP;
+    if (this.canvas.width !== w || this.canvas.height !== h) {
+      this.canvas.width = w;
+      this.canvas.height = h;
+    }
+    this.ensureLegacyButtons();
+    for (const b of this.legacyButtons) b.style.display = 'block';
+    this.render();
+  }
+
+  /** Back from the legacy look: the diamond's clip, glow and square canvas. */
+  private restoreDiamondLook(): void {
+    if (!this.container || !this.canvas) return;
+    this.container.style.clipPath = 'polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%)';
+    this.container.style.filter = FILTER_BASE;
+    this.container.style.background = '#0f172a';
+    this.container.style.transition = 'filter 200ms';
+    if (this.canvas.width !== this.currentSize || this.canvas.height !== this.currentSize) {
+      this.canvas.width = this.currentSize;
+      this.canvas.height = this.currentSize;
+    }
+    for (const b of this.legacyButtons) b.style.display = 'none';
+  }
+
+  /** "+" bottom-left, "-" bottom-right: SmallPanelPlus / SmallPanelMinus. */
+  private ensureLegacyButtons(): void {
+    if (this.legacyButtons.length > 0 || !this.wrapper) return;
+    const make = (text: string, title: string, side: 'left' | 'right', factor: number): HTMLElement => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      b.title = title;
+      b.setAttribute('aria-label', title);
+      b.style.cssText = `
+        position: absolute;
+        bottom: 0;
+        ${side}: 0;
+        width: 14px;
+        height: 16px;
+        padding: 0;
+        background: #000;
+        border: 0;
+        color: #5e9384;
+        font: bold 16px / 14px 'MS Sans Serif', Tahoma, sans-serif;
+        cursor: pointer;
+        z-index: 1;
+      `;
+      b.onmouseenter = () => { b.style.color = '#fff'; };
+      b.onmouseleave = () => { b.style.color = '#5e9384'; };
+      b.onmousedown = (e) => e.stopPropagation();
+      b.onclick = (e) => {
+        e.stopPropagation();
+        this.zoomBy(factor);
+      };
+      return b;
+    };
+    this.legacyButtons = [
+      make('+', 'Zoom in (small map)', 'left', ZOOM_IN_FACTOR),
+      make('-', 'Zoom out (small map)', 'right', ZOOM_OUT_FACTOR),
+    ];
+    for (const b of this.legacyButtons) this.wrapper.appendChild(b);
+  }
+
+  /** Top or left border of the legacy frame — the original's SmallMapTopBorder / SmallMapLeftBorder. */
+  private legacyGripAt(clientX: number, clientY: number): 'top' | 'left' | null {
+    if (!this.wrapper) return null;
+    const r = this.wrapper.getBoundingClientRect();
+    if (clientY - r.top < LEGACY_TOP_GRIP) return 'top';
+    if (clientX - r.left < LEGACY_LEFT_GRIP) return 'left';
+    return null;
+  }
+
+  private startLegacyResize(edge: 'top' | 'left', clientX: number, clientY: number): void {
+    const startW = this.legacyW;
+    const startH = this.legacyH;
+    const onMove = (e: MouseEvent): void => {
+      const maxW = Math.max(LEGACY_MIN_W, (typeof window !== 'undefined' ? window.innerWidth : 800) - 100);
+      const maxH = Math.max(LEGACY_MIN_H, (typeof window !== 'undefined' ? window.innerHeight : 600) - LEGACY_BOTTOM - 40);
+      if (edge === 'left') this.legacyW = Math.max(LEGACY_MIN_W, Math.min(maxW, startW + (clientX - e.clientX)));
+      else this.legacyH = Math.max(LEGACY_MIN_H, Math.min(maxH, startH + (clientY - e.clientY)));
+      this.applyLegacyStyle('block');
+    };
+    const onUp = (): void => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      this.resizeDrag = null;
+    };
+    this.resizeDrag = { startX: clientX, startY: clientY, startSize: startW, onMove, onUp };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  /** The theme decides the look; re-apply it when the theme changes. */
+  private syncLegacy(): boolean {
+    const legacy = useUiStore.getState().theme === 'legacy';
+    if (legacy === this.legacy) return false;
+    this.legacy = legacy;
+    if (this.wrapper && !this.isMobile()) this.applyDockedStyle(this.visible ? 'block' : 'none');
+    return true;
   }
 
   // ---------------------------------------------------------------------------
@@ -323,7 +474,8 @@ export class MinimapUI {
 
   /** Re-anchor on panel changes. */
   private onUiStateChange(): void {
-    this.applyPositioning();
+    if (this.syncLegacy()) return;
+    if (!this.legacy) this.applyPositioning();
   }
 
   // ---------------------------------------------------------------------------
@@ -338,6 +490,7 @@ export class MinimapUI {
     // ── Outer wrapper ─────────────────────────────────────────────────────────
     this.wrapper = document.createElement('div');
     this.wrapper.id = 'minimap-wrapper';
+    this.legacy = useUiStore.getState().theme === 'legacy';
 
     // ── Inner diamond container ────────────────────────────────────────────────
     this.container = document.createElement('div');
@@ -384,9 +537,29 @@ export class MinimapUI {
     if (!this.container) return;
 
     // ── Mouse: click → navigate, or drag the bottom-right edge → resize ────
+    if (this.wrapper) {
+      this.wrapper.addEventListener('mousedown', (e: MouseEvent) => {
+        if (!this.legacy) return;
+        const edge = this.legacyGripAt(e.clientX, e.clientY);
+        if (!edge) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.startLegacyResize(edge, e.clientX, e.clientY);
+      });
+      this.wrapper.addEventListener('mousemove', (e: MouseEvent) => {
+        if (!this.legacy || !this.wrapper) return;
+        const edge = this.legacyGripAt(e.clientX, e.clientY);
+        this.wrapper.style.cursor = edge === 'top' ? 'ns-resize' : edge === 'left' ? 'ew-resize' : '';
+      });
+    }
+
     this.container.onmousedown = (e: MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+      if (this.legacy) {
+        this.handleClick(e.offsetX, e.offsetY);
+        return;
+      }
       if (!this.isMobile() && this.isOnResizeGrip(e.offsetX, e.offsetY)) {
         this.startResize(e.clientX, e.clientY);
         return;
@@ -396,6 +569,10 @@ export class MinimapUI {
 
     this.container.addEventListener('mousemove', (e: MouseEvent) => {
       if (!this.container || this.isMobile()) return;
+      if (this.legacy) {
+        this.container.style.cursor = 'crosshair';
+        return;
+      }
       this.container.style.cursor = this.isOnResizeGrip(e.offsetX, e.offsetY) ? 'nwse-resize' : 'crosshair';
     });
 
@@ -451,6 +628,7 @@ export class MinimapUI {
   private applySize(newSize: number): void {
     const clamped = Math.max(MIN_SIZE, Math.min(this.maxDockedSize(), newSize));
     this.currentSize = clamped;
+    if (this.legacy) return;
     if (this.wrapper) {
       this.wrapper.style.width  = `${clamped}px`;
       this.wrapper.style.height = `${clamped}px`;
@@ -521,6 +699,12 @@ export class MinimapUI {
   /** Scale factor for terrain canvas → minimap canvas (with rotation and padding). */
   private getTerrainScale(): number {
     if (!this.terrainCanvas) return 1;
+    if (this.legacy && this.canvas) {
+      // The isometric diamond's width fills the frame at zoom 1 (its height is half of it).
+      const tW = this.terrainCanvas.width;
+      const tH = this.terrainCanvas.height;
+      return this.canvas.width / Math.sqrt(tW * tW + tH * tH);
+    }
     const tW = this.terrainCanvas.width;
     const tH = this.terrainCanvas.height;
     const diagonal = Math.sqrt(tW * tW + tH * tH);
@@ -563,6 +747,11 @@ export class MinimapUI {
     const ctx = this.ctx;
     const s = this.currentSize;
 
+    if (this.legacy) {
+      this.renderLegacy();
+      return;
+    }
+
     // Clear
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, s, s);
@@ -591,6 +780,32 @@ export class MinimapUI {
 
     // Screen-space diamond border (drawn after restore, in screen coords)
     this.drawDiamondBorder(ctx);
+  }
+
+  /** The small map in the map's own projection: the same diamond, flattened to 2:1. */
+  private renderLegacy(): void {
+    if (!this.ctx || !this.canvas) return;
+    const ctx = this.ctx;
+    const w = this.canvas.width;
+    const h = this.canvas.height;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, w, h);
+    if (!this.terrainCanvas) return;
+    const tW = this.terrainCanvas.width;
+    const tH = this.terrainCanvas.height;
+    const zoom = this.zoom;
+    const scale = this.getTerrainScale() * zoom;
+    const focus = this.viewFocus(zoom);
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(1, 0.5);
+    ctx.rotate(Math.PI / 4);
+    ctx.scale(scale, scale);
+    ctx.translate(-focus.x, -focus.y);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(this.terrainCanvas, -tW / 2, -tH / 2);
+    this.drawViewportInGrid(ctx, scale);
+    ctx.restore();
   }
 
   // ---------------------------------------------------------------------------
@@ -704,9 +919,11 @@ export class MinimapUI {
     const focus = this.viewFocus(zoom);
 
     // Reverse transform: minimap pixel → terrain grid coordinate
-    // 1. Undo translate (center of canvas)
-    const dx = pixelX - s / 2;
-    const dy = pixelY - s / 2;
+    // 1. Undo translate (center of canvas) — and, for the legacy frame, its 2:1 flattening
+    const cw = this.legacy && this.canvas ? this.canvas.width : s;
+    const ch = this.legacy && this.canvas ? this.canvas.height : s;
+    const dx = pixelX - cw / 2;
+    const dy = (pixelY - ch / 2) * (this.legacy ? 2 : 1);
 
     // 2. Undo rotate (-45°): cos(-45°) = cos45, sin(-45°) = -cos45
     const rx =  dx * COS45 + dy * COS45;

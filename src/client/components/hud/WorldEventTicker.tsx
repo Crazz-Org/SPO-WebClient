@@ -37,7 +37,12 @@ import styles from './WorldEventTicker.module.css';
 /** The card's 30-60 s band, midpoint — lighter than the legacy's effective ~10 s. */
 export const POLL_MS = 45_000;
 
-export function WorldEventTicker() {
+/**
+ * The newest world event, polled as described above. Only one poller may run at a time —
+ * the pop is destructive — so the legacy theme's toolbar (LegacyGameChrome) uses this hook
+ * in place of this ticker, never beside it.
+ */
+export function useWorldEvent(): WorldEventLine | null {
   const client = useClient();
   const [event, setEvent] = useState<WorldEventLine | null>(null);
 
@@ -59,6 +64,12 @@ export function WorldEventTicker() {
       clearInterval(t);
     };
   }, [client]);
+
+  return event;
+}
+
+export function WorldEventTicker() {
+  const event = useWorldEvent();
 
   const surfaceOpen = useUiStore((s) => s.stack.length > 0 && !s.connectMode.active);
 

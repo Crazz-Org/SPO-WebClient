@@ -418,3 +418,450 @@
   outline: 2px solid var(--accent-gold);
   outline-offset: 2px;
 }
+
+/* The legacy theme's own pieces — tab edges, zone pictures and the name label */
+.tabEdge,
+.zoneIcon,
+.nameLabel {
+  display: none;
+}
+
+/* ============================================================================
+ * Legacy theme — createCompany.asp, the frameset the original opened for "Create New!"
+ * (rows 128, *, 7, 95; the middle row cols 300, *, 10), measured on the live client:
+ *
+ *   toptabs.asp   black; "Create Company" (.header1 17 px, 40 px down, 10 px in) over
+ *                 "Associate with:" (.header3, Tahoma bold 12 pt #ff9900), then the seal
+ *                 tabs at y 102: 19 px cells, Tahoma bold 12 px, 10 px side padding, an
+ *                 11 × 14 check box before the name; a plain tab on backtab.gif in
+ *                 #94B9B0, the selected one on #345950 in white with checksel.gif; tab1-7.gif
+ *                 edges between them (CompanyCreationModal.tsx tabEdge), back.gif after the
+ *                 last; under them the #345950 / watermark.jpg panel to y 128
+ *   info.asp      300 px on #345950 / watermark.jpg: the seal's lore (.sealExpln, Tahoma 12
+ *                 px white, padding 20 px) in 200 px, the category fingers right-aligned in
+ *                 the last 100 px (20 px down, 5 px cells, Tahoma bold 10 px #94B9B0, the
+ *                 current one on #143930)
+ *   facilityList  #143930, margin 10 px; facilities flow in 200 px cells (padding 3 px,
+ *                 1 px #345950 underline): the name (Tahoma 11 px #fff8dc), the map icon in an
+ *                 80 px row beside the zone picture over price and surface (Tahoma bold 9 px
+ *                 #ff9900), the description (10 px #94B9B0, 100 px tall)
+ *   filler        10 px #345950 right of the list, 7 px #345950 under the row
+ *   entername     black, 95 px: "Company name :" (.header3), a 40-character input, OK
+ *                 (.button: Tahoma bold 10 pt white, padding 5 px, 1 px #345950 frame
+ *                 turning white under the pointer, 100 px); an error as a maroon band
+ *
+ * On the login screen the page sits beside the Universe Map (left 345 px), as the original
+ * opened it in the map's web view; in the game it takes the whole window. No close button:
+ * the original had none — Escape, or another world on the map, leaves.
+ * ============================================================================ */
+
+:global([data-theme="legacy"]) .backdrop {
+  background: transparent;
+  animation: none;
+}
+
+:global([data-theme="legacy"]) .modal {
+  inset: 0;
+  transform: none;
+  width: auto;
+  max-height: none;
+  background: #000;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  animation: none;
+  font-family: Tahoma, Verdana, Arial, sans-serif;
+}
+
+:global([data-theme="legacy"]:has([data-stage])) .modal,
+:global([data-theme="legacy"]:has([data-stage])) .backdrop {
+  left: 345px;
+}
+
+/* toptabs.asp — "Create Company", then "Associate with:" in orange */
+:global([data-theme="legacy"]) .header {
+  display: block;
+  padding: 40px 0 0 10px;
+  border: 0;
+}
+
+:global([data-theme="legacy"]) .closeBtn {
+  display: none;
+}
+
+:global([data-theme="legacy"]) .title[data-legacy-text] {
+  font-size: 0;
+}
+
+:global([data-theme="legacy"]) .title[data-legacy-text]::before {
+  content: attr(data-legacy-text);
+  display: block;
+  color: #fff;
+  font: bold 17px / 21px Tahoma, Verdana, Arial, sans-serif;
+}
+
+:global([data-theme="legacy"]) .title[data-legacy-text]::after {
+  content: 'Associate with:';
+  display: block;
+  margin-top: 10px;
+  color: #ff9900;
+  font: bold 16px / 20px Tahoma, Verdana, Arial, sans-serif;
+}
+
+:global([data-theme="legacy"]) .clusterTabs {
+  gap: 0;
+  height: 26px;
+  margin-top: 10px;
+  padding: 0 0 7px;
+  box-sizing: border-box;
+  border: 0;
+  background:
+    url(../../assets/legacy/create-company/back.gif) 0 0 / 2px 19px repeat-x,
+    #345950 url(../../assets/legacy/create-company/watermark.jpg) 0 -109px no-repeat;
+  overflow: hidden;
+}
+
+:global([data-theme="legacy"]) .tabEdge {
+  display: block;
+  flex: none;
+  width: 10px;
+  height: 19px;
+  background: #345950 no-repeat;
+}
+
+:global([data-theme="legacy"]) .tabEdge[data-edge="tab1"] { background-image: url(../../assets/legacy/create-company/tab1.gif); }
+:global([data-theme="legacy"]) .tabEdge[data-edge="tab2"] { background-image: url(../../assets/legacy/create-company/tab2.gif); }
+:global([data-theme="legacy"]) .tabEdge[data-edge="tab3"] { background-image: url(../../assets/legacy/create-company/tab3.gif); }
+:global([data-theme="legacy"]) .tabEdge[data-edge="tab4"] { background-image: url(../../assets/legacy/create-company/tab4.gif); }
+:global([data-theme="legacy"]) .tabEdge[data-edge="tab5"] { background-image: url(../../assets/legacy/create-company/tab5.gif); }
+:global([data-theme="legacy"]) .tabEdge[data-edge="tab6"] { background-image: url(../../assets/legacy/create-company/tab6.gif); }
+:global([data-theme="legacy"]) .tabEdge[data-edge="tab7"] { background-image: url(../../assets/legacy/create-company/tab7.gif); }
+
+:global([data-theme="legacy"]) .clusterTab {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: 19px;
+  padding: 0 10px;
+  background: url(../../assets/legacy/create-company/backtab.gif) 0 0 repeat-x;
+  border: 0;
+  border-radius: 0;
+  color: #94b9b0;
+  font: bold 12px Tahoma, Verdana, Arial, sans-serif;
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .clusterTab::before {
+  content: '';
+  flex: none;
+  width: 11px;
+  height: 14px;
+  margin-right: 12px;
+  background: url(../../assets/legacy/create-company/check.gif) no-repeat;
+}
+
+:global([data-theme="legacy"]) .clusterTab:hover {
+  background: url(../../assets/legacy/create-company/backtab.gif) 0 0 repeat-x;
+  color: #94b9b0;
+}
+
+:global([data-theme="legacy"]) .clusterTabActive,
+:global([data-theme="legacy"]) .clusterTabActive:hover {
+  background: #345950;
+  color: #fff;
+  cursor: default;
+}
+
+:global([data-theme="legacy"]) .clusterTabActive::before {
+  background-image: url(../../assets/legacy/create-company/checksel.gif);
+}
+
+:global([data-theme="legacy"]) .clusterTabLocked {
+  opacity: 1;
+  cursor: pointer;
+}
+
+/* The middle row: info.asp | facilityList.asp | the 10 px filler, then the 7 px filler */
+:global([data-theme="legacy"]) .body {
+  grid-template-columns: 300px 1fr;
+  padding: 2px 10px 0 0;
+  border-bottom: 7px solid #345950;
+  background: #345950;
+}
+
+/* info.asp */
+:global([data-theme="legacy"]) .sidebar {
+  display: grid;
+  grid-template-columns: 200px 100px;
+  grid-template-rows: auto auto 1fr;
+  align-content: start;
+  border: 0;
+  background: #345950 url(../../assets/legacy/create-company/watermark.jpg) 0 -2px no-repeat;
+  overflow: hidden;
+}
+
+:global([data-theme="legacy"]) .description {
+  grid-column: 1;
+  grid-row: 1 / -1;
+  padding: 20px;
+  color: #fff;
+  font: 12px / 14px Tahoma, Verdana, Arial, sans-serif;
+  white-space: pre-line;
+  border: 0;
+}
+
+:global([data-theme="legacy"]) .descriptionLoading {
+  grid-column: 1;
+  padding: 20px;
+}
+
+:global([data-theme="legacy"]) .categoriesHeader {
+  display: none;
+}
+
+:global([data-theme="legacy"]) .categoryList {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-top: 20px;
+  padding: 0;
+}
+
+:global([data-theme="legacy"]) .categoryItem {
+  display: block;
+  width: 100%;
+  padding: 5px 15px 5px 5px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: #94b9b0;
+  font: bold 10px / 12px Tahoma, Verdana, Arial, sans-serif;
+  text-align: right;
+  white-space: nowrap;
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .categoryItem:hover {
+  background: transparent;
+  color: #94b9b0;
+}
+
+:global([data-theme="legacy"]) .categoryItemActive,
+:global([data-theme="legacy"]) .categoryItemActive:hover {
+  background: #143930;
+}
+
+:global([data-theme="legacy"]) .categoryIndicator {
+  display: none;
+}
+
+/* facilityList.asp */
+:global([data-theme="legacy"]) .facilityPanel {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0;
+  padding: 10px;
+  background: #143930;
+}
+
+:global([data-theme="legacy"]) .facilityEmpty,
+:global([data-theme="legacy"]) .facilityLoadingGrid {
+  display: none;
+}
+
+:global([data-theme="legacy"]) .facilityCard {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto 80px 100px;
+  grid-template-areas:
+    "name name"
+    "icon meta"
+    "desc desc";
+  align-items: start;
+  gap: 0 4px;
+  width: 200px;
+  padding: 3px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid #345950;
+  border-radius: 0;
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .facilityCard:hover {
+  border-color: #345950;
+}
+
+:global([data-theme="legacy"]) .facilityInfo {
+  display: contents;
+}
+
+:global([data-theme="legacy"]) .facilityName {
+  grid-area: name;
+  color: #fff8dc;
+  font: 11px / 13px Tahoma, Verdana, Arial, sans-serif;
+  white-space: normal;
+}
+
+:global([data-theme="legacy"]) .facilityIcon {
+  grid-area: icon;
+  align-self: center;
+  width: auto;
+  height: auto;
+  max-width: 120px;
+  max-height: 80px;
+  margin-left: 3px;
+  background: none;
+  border-radius: 0;
+  image-rendering: auto;
+  object-fit: contain;
+}
+
+:global([data-theme="legacy"]) .facilityDesc {
+  grid-area: desc;
+  height: 100px;
+  overflow: hidden;
+  color: #94b9b0;
+  font: 10px / 12px Tahoma, Verdana, Arial, sans-serif;
+  white-space: normal;
+}
+
+:global([data-theme="legacy"]) .facilityZoneText {
+  display: none;
+}
+
+:global([data-theme="legacy"]) .facilityMeta {
+  grid-area: meta;
+  align-items: flex-start;
+  gap: 0;
+  padding-top: 3px;
+}
+
+:global([data-theme="legacy"]) .zoneIcon {
+  display: block;
+  width: 25px;
+  height: 19px;
+  background: no-repeat;
+}
+
+:global([data-theme="legacy"]) .zoneIcon[data-zone="hires"]    { background-image: url(../../assets/legacy/create-company/zone-hires.gif); }
+:global([data-theme="legacy"]) .zoneIcon[data-zone="midres"]   { background-image: url(../../assets/legacy/create-company/zone-midres.gif); }
+:global([data-theme="legacy"]) .zoneIcon[data-zone="lores"]    { background-image: url(../../assets/legacy/create-company/zone-lores.gif); }
+:global([data-theme="legacy"]) .zoneIcon[data-zone="industry"] { background-image: url(../../assets/legacy/create-company/zone-industry.gif); }
+:global([data-theme="legacy"]) .zoneIcon[data-zone="commerce"] { background-image: url(../../assets/legacy/create-company/zone-commerce.gif); }
+:global([data-theme="legacy"]) .zoneIcon[data-zone="civics"]   { background-image: url(../../assets/legacy/create-company/zone-civics.gif); }
+:global([data-theme="legacy"]) .zoneIcon[data-zone="offices"]  { background-image: url(../../assets/legacy/create-company/zone-offices.gif); }
+
+:global([data-theme="legacy"]) .facilityCost,
+:global([data-theme="legacy"]) .facilityTime {
+  color: #ff9900;
+  font: bold 9px / 11px Tahoma, Verdana, Arial, sans-serif;
+  white-space: nowrap;
+}
+
+/* entername.asp */
+:global([data-theme="legacy"]) .bottomSection {
+  height: 95px;
+  box-sizing: border-box;
+  padding-top: 13px;
+}
+
+:global([data-theme="legacy"]) .error {
+  width: 90%;
+  margin: 0 0 0 10px !important;
+  padding: 2px 10px;
+  box-sizing: border-box;
+  background: maroon;
+  border: 0;
+  border-radius: 0;
+  color: #fff;
+  font: bold 13.33px Verdana, sans-serif;
+}
+
+:global([data-theme="legacy"]) .error::before {
+  content: 'Error: ';
+}
+
+:global([data-theme="legacy"]) .bottomBar {
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 10px;
+  border: 0;
+}
+
+:global([data-theme="legacy"]) .error + .bottomBar {
+  padding-top: 4px;
+}
+
+:global([data-theme="legacy"]) .nameLabel,
+:global([data-theme="legacy"]) .refusal {
+  display: block;
+  flex: none;
+  padding: 0;
+  color: #ff9900;
+  font: bold 16px Tahoma, Verdana, Arial, sans-serif;
+  white-space: nowrap;
+}
+
+:global([data-theme="legacy"]) .refusal {
+  flex: 1;
+  white-space: normal;
+}
+
+:global([data-theme="legacy"]) .nameInput {
+  flex: none;
+  width: 267px;
+  height: 22px;
+  padding: 1px 2px;
+  box-sizing: border-box;
+  background: #fff;
+  border: 2px inset #c0c0c0;
+  border-radius: 0;
+  color: #000;
+  font: 13.33px Arial, sans-serif;
+}
+
+:global([data-theme="legacy"]) .nameInput::placeholder {
+  color: transparent;
+}
+
+:global([data-theme="legacy"]) .nameInput:focus-visible {
+  outline: none;
+}
+
+:global([data-theme="legacy"]) .submitBtn {
+  width: 112px;
+  height: 28px;
+  margin-left: 4px;
+  padding: 5px;
+  background: transparent;
+  border: 1px solid #345950;
+  border-radius: 0;
+  color: #fff;
+  font: bold 13.33px Tahoma, Verdana, Arial, sans-serif;
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .submitBtn:hover:not(:disabled) {
+  opacity: 1;
+  border-color: #fff;
+}
+
+:global([data-theme="legacy"]) .submitBtn:disabled {
+  opacity: 1;
+  cursor: default;
+}
+
+:global([data-theme="legacy"]) .submitBtn[data-legacy-text] {
+  font-size: 0;
+}
+
+:global([data-theme="legacy"]) .submitBtn[data-legacy-text]::after {
+  content: attr(data-legacy-text);
+  font: bold 13.33px Tahoma, Verdana, Arial, sans-serif;
+}

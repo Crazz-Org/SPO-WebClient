@@ -1,0 +1,346 @@
+/* ============================================================================
+ * LegacyChatWindow — the original chat over the map area (above the 100 px toolbar),
+ * measured on the live client and on ChatHandlerViewer.dfm / ChatListHandlerViewer.dfm:
+ *
+ *   ground        #395950; a 2 px black edge on the left, 1 px on the right
+ *   top           GradientBox1, black → #395950 over the first 45 px
+ *   bottom        GradientBox2, #395950 → black over the last 16 px
+ *   channels      ListView in icon view: 20 px icons, Arial 9 px #E3E5B6 names, 100 px apart
+ *   buttons       TFramedButton 148 × 23, 1 px #548577 frame, Arial 12 px white; disabled
+ *                 text #548577; the channel Marquee black, Verdana 8 pt bold #51AE8B
+ *   splitters     1 px #304942 under the channels and over the composer
+ *   conversation  ChatRenderer on #395950, Verdana 9 pt bold white by default
+ *   composer      TextInput centred, Verdana 13 px #FFFFC6
+ *   side column   150 px: "Chat" Verdana 27 px #FFFFD9 by its 35 × 32 icon; the users,
+ *                 MS Sans Serif 11 px #FFFFDD, selection #314D45; the buttons 147 × 23
+ * ============================================================================ */
+
+.window {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 100px;
+  z-index: 1;
+  display: flex;
+  box-sizing: border-box;
+  border-left: 2px solid #000;
+  border-right: 1px solid #000;
+  background:
+    linear-gradient(to bottom, #000, #395950 45px, #395950 calc(100% - 16px), #000) no-repeat,
+    #395950;
+  font-family: Verdana, Tahoma, sans-serif;
+}
+
+/* ---- the conversation side ---- */
+.main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 45px 7px 16px;
+}
+
+.channels {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  height: 127px;
+  border-bottom: 1px solid #304942;
+}
+
+.noChannels {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #548577;
+  font: 12px Verdana, sans-serif;
+}
+
+.channelList {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 4px 0;
+  padding: 7px 0 0 7px;
+  overflow-y: auto;
+}
+
+.channel {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #e3e5b6;
+  font: 9px Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.channelIcon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  background: url(../../../assets/legacy/chat/channel.png) no-repeat;
+}
+
+.channelName {
+  padding: 1px 2px;
+}
+
+.channelSelected .channelName {
+  background: #314d45;
+  color: #fff;
+}
+
+.channelCurrent .channelName {
+  text-decoration: underline;
+}
+
+.channelBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 24px;
+  margin: 0 0 7px 11px;
+}
+
+.channelBar > .framed {
+  flex: none;
+  width: 148px;
+}
+
+.channelMarquee {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+  margin-left: 4px;
+  background: #000;
+}
+
+.channelMarqueeText {
+  top: 3px;
+  color: #51ae8b;
+  text-transform: uppercase;
+}
+
+.channelMarqueeText::after {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='2'%3E%3Crect width='1' height='1' fill='%2336745c'/%3E%3C/svg%3E");
+}
+
+.log {
+  flex: 1;
+  min-height: 0;
+  padding: 12px 3px;
+  overflow-y: auto;
+  color: #fff;
+  font: bold 12px / 20px Verdana, sans-serif;
+}
+
+.systemLine {
+  color: #0f0;
+  font: italic bold 17px / 20px 'Times New Roman', Times, serif;
+}
+
+.line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 2px;
+}
+
+.name { color: #ff0; }
+.text { color: #fff; }
+.gmName { color: #ccc; }
+.gmText { color: #fff; font-style: italic; }
+
+.composer {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 40px;
+  border-top: 1px solid #304942;
+}
+
+.input {
+  width: 100%;
+  height: 24px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: #ffffc6;
+  font: 13px Verdana, sans-serif;
+  text-align: center;
+}
+
+.input::placeholder {
+  color: #ffffc6;
+  opacity: 1;
+}
+
+.input:focus::placeholder {
+  color: transparent;
+}
+
+/* The original composer had no focus mark; a keyboard user still gets one */
+.input:focus-visible {
+  outline: 1px solid #548577;
+}
+
+/* ---- the "Chat" column ---- */
+.side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  width: 150px;
+  padding: 0 0 16px;
+}
+
+.title {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 45px;
+  padding-left: 4px;
+  color: #ffffd9;
+  font: bold 27px Verdana, sans-serif;
+}
+
+.titleIcon {
+  flex: none;
+  width: 35px;
+  height: 32px;
+  background: url(../../../assets/legacy/chat/chat-title.png) no-repeat;
+  transform: scale(0.75);
+}
+
+.users {
+  flex: 1;
+  min-height: 0;
+  padding: 7px 4px;
+  overflow-y: auto;
+}
+
+.user {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: #ffffdd;
+  font: 11px Tahoma, 'MS Sans Serif', sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.userSelected .userRow {
+  background: #314d45;
+}
+
+.userRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+}
+
+.userName {
+  margin-left: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nobTop {
+  display: block;
+  width: 138px;
+  height: 6px;
+  background: url(../../../assets/legacy/chat/nobtopmargin.png) no-repeat;
+}
+
+.nobMargin {
+  display: block;
+  width: 138px;
+  height: 16px;
+  background: no-repeat;
+}
+
+.nobMargin[data-rank="baron"] { background-image: url(../../../assets/legacy/chat/baronmargin.png); }
+.nobMargin[data-rank="viscount"] { background-image: url(../../../assets/legacy/chat/viscountmargin.png); }
+.nobMargin[data-rank="earl"] { background-image: url(../../../assets/legacy/chat/earlmargin.png); }
+.nobMargin[data-rank="marquess"] { background-image: url(../../../assets/legacy/chat/marquessmargin.png); }
+.nobMargin[data-rank="duke"] { background-image: url(../../../assets/legacy/chat/dukemargin.png); }
+.nobMargin[data-rank="srduke"] { background-image: url(../../../assets/legacy/chat/srdukemargin.png); }
+
+.sideButtons {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 1px 0 2px;
+}
+
+.sideButtons > .framed {
+  width: 147px;
+}
+
+/* ---- icons (ChatList.dat) ---- */
+.icon {
+  flex: none;
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  background: no-repeat center;
+}
+
+.icon[data-icon="void"] { background: none; }
+.icon[data-icon="afk"] { width: 26px; background-image: url(../../../assets/legacy/chat/afk.png); }
+.icon[data-icon="writing"] { background-image: url(../../../assets/legacy/chat/writing.png); }
+.icon[data-icon="ignoreuser"] { background-image: url(../../../assets/legacy/chat/ignoreuser.png); }
+.icon[data-icon="support"] { background-image: url(../../../assets/legacy/chat/support.png); }
+.icon[data-icon="oc"] { background-image: url(../../../assets/legacy/chat/oc.png); }
+.icon[data-icon="publisher"] { background-image: url(../../../assets/legacy/chat/publisher.png); }
+.icon[data-icon="ambassador"] { background-image: url(../../../assets/legacy/chat/ambassador.png); }
+.icon[data-icon="gm"] { background-image: url(../../../assets/legacy/chat/gm.png); }
+.icon[data-icon="trial"] { background-image: url(../../../assets/legacy/chat/trial.png); }
+.icon[data-icon="newbie"] { background-image: url(../../../assets/legacy/chat/newbie.png); }
+.icon[data-icon="veteran"] { background-image: url(../../../assets/legacy/chat/veteran.png); }
+.icon[data-icon="ifel"] { background-image: url(../../../assets/legacy/chat/ifel.png); }
+.icon[data-icon="baron"] { background-image: url(../../../assets/legacy/chat/baron.png); }
+.icon[data-icon="viscount"] { background-image: url(../../../assets/legacy/chat/viscount.png); }
+.icon[data-icon="earl"] { background-image: url(../../../assets/legacy/chat/earl.png); }
+.icon[data-icon="marquess"] { background-image: url(../../../assets/legacy/chat/marquess.png); }
+.icon[data-icon="duke"] { background-image: url(../../../assets/legacy/chat/duke.png); }
+.icon[data-icon="srduke"] { background-image: url(../../../assets/legacy/chat/srduke.png); }
+
+/* ---- TFramedButton (chat frame colours) ---- */
+.framed {
+  height: 23px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid #548577;
+  border-radius: 0;
+  color: #fff;
+  font: 12px Arial, sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.framed:hover:not(:disabled) {
+  border-color: #fff;
+}
+
+.framed:disabled {
+  color: #548577;
+  cursor: default;
+}

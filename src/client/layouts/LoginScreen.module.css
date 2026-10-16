@@ -20,3 +20,72 @@
 .screen > * {
   margin-block: auto;
 }
+
+/* ---- Legacy theme: the original client's logon chrome, drawn by the shell so no stage
+   knows about it. Signing in: signin.jpg in the top-left corner (LogonHandlerViewer.dfm,
+   LogonSplashImage at 0,0). Choosing a world or a company: the "Joining a world" side panel
+   and the stage's title band (NewLogon/join.htm frameset — Left 100 px, Top 80 px, the
+   title GIF at margin-top 2 px), with the stage pushed out of their way. ---- */
+:global([data-theme="legacy"]) .screen::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: transparent;
+  background-repeat: no-repeat;
+}
+
+:global([data-theme="legacy"]) .screen[data-stage="auth"]::before {
+  background-image: url(../assets/legacy/signin.jpg);
+  background-position: 0 0;
+}
+
+/* Choosing an area or a world: the Universe Map (UniversalMapViewer.dfm, 345 px wide, the
+   form's frame_Align=left) over the BackgroundHandler — tempscreen.jpg stretched across the
+   rest of the window with TVFilter's one-line-in-two scanlines. The map's own header,
+   "Universe Map" on a black → #243934 gradient with its 32 px icon, is the ::after (kept
+   while a company is chosen); the stages draw everything under it (ZoneStage / WorldStage
+   .module.css). */
+:global([data-theme="legacy"]) .screen[data-stage="zones"],
+:global([data-theme="legacy"]) .screen[data-stage="worlds"] {
+  display: block;
+}
+
+:global([data-theme="legacy"]) .screen[data-stage="zones"]::before,
+:global([data-theme="legacy"]) .screen[data-stage="worlds"]::before {
+  left: 345px;
+  background-image:
+    repeating-linear-gradient(to bottom, var(--legacy-umap-gradient-to) 0 1px, transparent 1px 2px),
+    url(../assets/legacy/tempscreen.jpg);
+  background-size: auto, 100% 100%;
+  background-position: 0 0, 0 0;
+}
+
+:global([data-theme="legacy"]) .screen[data-stage="zones"]::after,
+:global([data-theme="legacy"]) .screen[data-stage="worlds"]::after,
+:global([data-theme="legacy"]) .screen[data-stage="companies"]::after {
+  content: 'Universe Map';
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 0;
+  width: 337px;
+  height: 51px;
+  box-sizing: border-box;
+  padding: 9px 0 0 46px;
+  background:
+    url(../assets/legacy/universe-map-icon.png) 7px 7px no-repeat,
+    linear-gradient(to bottom, #000, var(--legacy-umap-gradient-to));
+  color: var(--legacy-umap-title);
+  font: bold 20px var(--legacy-font);
+  pointer-events: none;
+}
+
+/* Choosing a company: the Universe Map stays on the left with the world selected, and the
+   world's company page (chooseCompany.asp, Logon=FALSE) fills the rest of the window on
+   voyager.css's black body. */
+:global([data-theme="legacy"]) .screen[data-stage="companies"] {
+  display: block;
+  padding-left: 345px;
+}

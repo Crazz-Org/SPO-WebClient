@@ -222,3 +222,29 @@ describe('CompanyCreationModal Magna gate', () => {
     expect(screen.queryByText(MAGNA_REFUSAL)).toBeNull();
   });
 });
+
+describe('CompanyCreationModal while the world is entered', () => {
+  beforeEach(() => {
+    useGameStore.setState({ mapLoading: { active: false, progress: 0, message: '' } });
+  });
+
+  // A created company goes straight into the world; the page used to stay up, over the
+  // loading screen, until the whole map had loaded.
+  it('closes as soon as the map starts loading', () => {
+    open();
+    renderWithProviders(<CompanyCreationModal />);
+    expect(useUiStore.getState().modal).toBe('createCompany');
+
+    act(() => {
+      useGameStore.setState({ mapLoading: { active: true, progress: 0, message: 'Loading game data...' } });
+    });
+
+    expect(useUiStore.getState().modal).toBeNull();
+  });
+
+  it('stays open while no map is loading', () => {
+    open();
+    renderWithProviders(<CompanyCreationModal />);
+    expect(useUiStore.getState().modal).toBe('createCompany');
+  });
+});

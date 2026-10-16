@@ -29,6 +29,17 @@ interface AuthStageProps {
 /** Matches the CSS stagger total in AuthStage.module.css (`.intro`), plus a small margin. */
 const INTRO_TOTAL_MS = 1400;
 
+/**
+ * A theme may ask for a longer intro through the `--login-intro-ms` token (the legacy theme
+ * plays the original client's two splash screens). Unset or unreadable — jsdom included —
+ * means the default.
+ */
+function introTotalMs(): number {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return INTRO_TOTAL_MS;
+  const ms = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--login-intro-ms'), 10);
+  return Number.isFinite(ms) && ms > 0 ? ms : INTRO_TOTAL_MS;
+}
+
 /** Module scope survives the sign-out and error remounts a store `reset()` would wipe. */
 let introPlayed = false;
 
@@ -105,7 +116,7 @@ export function AuthStage({
     if (!introPlaying) return;
     window.addEventListener('pointerdown', skipIntro);
     window.addEventListener('keydown', skipIntro);
-    const timer = setTimeout(() => setIntroPlaying(false), INTRO_TOTAL_MS);
+    const timer = setTimeout(() => setIntroPlaying(false), introTotalMs());
     return () => {
       window.removeEventListener('pointerdown', skipIntro);
       window.removeEventListener('keydown', skipIntro);
@@ -178,7 +189,14 @@ export function AuthStage({
       }}
     >
       <h1 className={styles.logo}>STARPEACE ONLINE</h1>
-      <p className={styles.tagline}>Build your empire. Shape the world.</p>
+      {/* data-legacy-text: the wording the legacy theme shows instead (lbWelcome in the
+          original client's LogonHandlerViewer.dfm); the stylesheet swaps it, nothing here does. */}
+      <p
+        className={styles.tagline}
+        data-legacy-text="Welcome to Star Peace. Please provide your sign in information. If you are new, click on New Account to create your Star Peace identity."
+      >
+        Build your empire. Shape the world.
+      </p>
 
       <GlassCard maxWidth={380} className={styles.authCard}>
         {resumeTarget ? (
@@ -193,35 +211,47 @@ export function AuthStage({
         ) : (
           <>
             <div className={styles.fieldGroup}>
-              <input
-                ref={usernameRef}
-                type="text"
-                className={styles.input}
-                placeholder="Username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                onKeyDown={handleKeyDown}
-                autoComplete="username"
-              />
-              <input
-                type="password"
-                className={styles.input}
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                onKeyDown={handleKeyDown}
-                autoComplete="current-password"
-              />
-              <select
-                aria-label="Language"
-                className={styles.languageSelect}
-                value={languageId}
-                onChange={(e) => handleLanguageChange(e.target.value)}
-              >
-                {LANGUAGES.map((lang) => (
-                  <option key={lang.id} value={lang.id}>{lang.label}</option>
-                ))}
-              </select>
+              {/* Each field is a <label>: screen-reader text only, the placeholder is the
+                  visible hint — except in the legacy theme, which shows the original client's
+                  captions (data-legacy-text) to the left of plain white edits. */}
+              <label className={styles.field}>
+                <span className={styles.fieldLabel} data-legacy-text="Alias:">Username</span>
+                <input
+                  ref={usernameRef}
+                  type="text"
+                  className={styles.input}
+                  placeholder="Username"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  autoComplete="username"
+                />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel} data-legacy-text="Password:">Password</span>
+                <input
+                  type="password"
+                  className={styles.input}
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  autoComplete="current-password"
+                />
+              </label>
+              <label className={styles.field}>
+                <span className={styles.fieldLabel} data-legacy-text="Language:">Language</span>
+                <select
+                  aria-label="Language"
+                  className={styles.languageSelect}
+                  value={languageId}
+                  onChange={(e) => handleLanguageChange(e.target.value)}
+                >
+                  {LANGUAGES.map((lang) => (
+                    <option key={lang.id} value={lang.id}>{lang.label}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             {isSingleUser && (
               <label className={styles.rememberMe}>
@@ -256,6 +286,7 @@ export function AuthStage({
               className={styles.connectBtn}
               onClick={handleConnect}
               disabled={isLoading || status === 'connecting'}
+              data-legacy-text={isLoading ? 'CONNECTING...' : 'SIGN IN'}
             >
               {isLoading ? 'Connecting...' : 'Enter the World'}
             </button>
@@ -265,6 +296,7 @@ export function AuthStage({
                 href={registerUrl}
                 target="_blank"
                 rel="noopener noreferrer"
+                data-legacy-text="NEW ACCOUNT"
               >
                 Create an account
               </a>

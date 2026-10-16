@@ -644,6 +644,8 @@ describe('fetchClusterFacilities', () => {
       cost: '$8,000K',
       area: '3600 m.',
       zoneType: 'Building must be located in blue zone or no zone at all.',
+      // The picture names the zone; the tooltip text does not (strBlueZone titles three)
+      zoneKind: 'commerce',
       description: 'The nerve center of your business empire.',
     });
     expect(previews[0]).not.toHaveProperty('buildTime');
@@ -686,7 +688,7 @@ describe('fetchClusterFacilities', () => {
     const previews = await fetchClusterFacilities(fake.ctx, 'PGI', 'x');
 
     expect(previews).toEqual([
-      { name: 'Bare Facility', iconUrl: '', cost: '', area: '', zoneType: '', description: '' },
+      { name: 'Bare Facility', iconUrl: '', cost: '', area: '', zoneType: '', zoneKind: '', description: '' },
     ]);
   });
 
@@ -703,6 +705,25 @@ describe('fetchClusterFacilities', () => {
 
     expect(previews[0].cost).toBe('');
     expect(previews[0].area).toBe('');
+  });
+
+  // The live pages print the surface as `3600 m²`, the ² a Windows-1252 byte that the UTF-8
+  // read of the page turns into U+FFFD; an entity-encoded one may come too.
+  it.each([
+    ['3600 m²', '3600 m²'],
+    ['3600 m�', '3600 m²'],
+    ['3600 m&sup2;', '3600 m²'],
+    ['3600 m.', '3600 m.'],
+  ])('reads the surface %j as %j', async (raw, expected) => {
+    const html = `
+      <span>
+        <div class=comment style="font-size: 11px">Company Headquarters</div>
+        <div class=comment style="font-size: 9px">$8,000K<br><nobr>${raw}</nobr></div>
+      </span>`;
+    mockFetch.mockResolvedValue(htmlResponse(html));
+    const fake = makeWebCtx();
+
+    expect((await fetchClusterFacilities(fake.ctx, 'Moab', 'x'))[0].area).toBe(expected);
   });
 
   it('returns nothing and logs when the page cannot be fetched', async () => {

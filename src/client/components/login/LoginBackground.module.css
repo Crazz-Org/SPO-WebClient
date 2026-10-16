@@ -23,3 +23,9 @@
     radial-gradient(ellipse at 50% 80%, rgba(6, 182, 212, 0.02) 0%, transparent 50%);
   pointer-events: none;
 }
+
+/* Legacy theme: the original client signed in on plain black (LogonHandlerView.Color =
+   clBlack) — no orbs, no gradients. The canvas keeps animating unseen; cheap enough. */
+:global([data-theme="legacy"]) .bg {
+  display: none;
+}

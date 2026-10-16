@@ -1,0 +1,124 @@
+/* ============================================================================
+ * SPO WebClient — Legacy theme
+ *
+ * The look of the original Voyager client: black ground, the teal-green skin
+ * panels (skinimage.bmp #2f574f, voyager.css #345950), pale-green frame lines
+ * (#749990 / #94b9b0), cornsilk text (#fff8dc / #eeeecc), orange highlights
+ * (#ff9900) and the bright green of the classic site (#66ff00). Square
+ * corners, solid panels, system fonts.
+ *
+ * Applied by `<html data-theme="legacy">` (store/theme.ts). Every declaration
+ * here re-assigns a token that design-tokens.css already defines, so with the
+ * attribute absent nothing changes and the Corporate Empire palette renders
+ * exactly as before. Layout tokens are never touched: the band table in
+ * design-tokens.test.ts stays true in both themes.
+ * ============================================================================ */
+
+:root[data-theme="legacy"] {
+  /* ---- Primary (positive/active states) — the classic site's green ---- */
+  --primary: #4fc63c;
+  --primary-dark: #2f9c2a;
+  --primary-light: #7fe36a;
+  --primary-muted: #1f5a2a;
+  --primary-subtle: rgba(79, 198, 60, 0.12);
+
+  /* ---- Accent — the orange that marked the selected item in the old frames ---- */
+  --accent-gold: #ff9900;
+  --accent-gold-light: #ffb340;
+  --accent-gold-dark: #cc7a00;
+  --accent-gold-subtle: rgba(255, 153, 0, 0.12);
+
+  /* ---- Backgrounds — black ground, teal skin panels ---- */
+  --bg-primary: #000000;
+  --bg-secondary: #1c3a34;
+  --bg-tertiary: #2f574f;
+  --bg-elevated: #345950;
+  --bg-hover: #41706a;
+
+  /* ---- Surface — solid skin panels with the pale-green frame lines ---- */
+  --surface-primary: #2f574f;
+  --surface-border: rgba(148, 185, 176, 0.35);
+  --surface-border-active: rgba(148, 185, 176, 0.65);
+  --surface-divider: rgba(148, 185, 176, 0.18);
+  --surface-border-strong: rgba(148, 185, 176, 0.65);
+  --scrim: rgba(0, 0, 0, 0.6);
+
+  /* ---- Glass — the original client had none: opaque, no blur ---- */
+  --glass-bg: rgba(47, 87, 79, 0.94);
+  --glass-bg-light: rgba(52, 89, 80, 0.96);
+  --glass-border: rgba(148, 185, 176, 0.35);
+  --glass-border-active: rgba(148, 185, 176, 0.65);
+  --glass-blur: none;
+  --glass-bg-hover: rgba(148, 185, 176, 0.15);
+
+  /* ---- Text — cornsilk on teal, pale green for the secondary levels ---- */
+  --text-primary: #fff8dc;
+  --text-secondary: #eeeecc;
+  --text-tertiary: #c9dcd3;
+  --text-muted: #94b9b0;
+  --text-placeholder: #749990;
+  --text-disabled: #4d6f68;
+
+  /* ---- Semantic ---- */
+  --success: #4fc63c;
+  --success-bg: rgba(79, 198, 60, 0.12);
+  --warning: #ff9900;
+  --warning-bg: rgba(255, 153, 0, 0.12);
+  --error: #ff5a4a;
+  --error-bg: rgba(255, 90, 74, 0.12);
+  --info: #5bc8d8;
+  --info-bg: rgba(91, 200, 216, 0.12);
+
+  /* ---- Financial ---- */
+  --money-positive: #66ff00;
+  --money-negative: #ff6a5a;
+  --money-neutral: #94b9b0;
+
+  /* ---- Typography — the fonts the old frames used; nothing to download ---- */
+  --font-sans: Tahoma, Verdana, 'Segoe UI', Arial, sans-serif;
+  --font-mono: Consolas, 'Courier New', monospace;
+
+  /* ---- Square corners — the one radius kept is the circle (dots, avatars) ---- */
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+
+  /* ---- Shadows — hard, no glow ---- */
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.6);
+  --shadow-md: 0 2px 0 rgba(0, 0, 0, 0.6);
+  --shadow-lg: 0 3px 0 rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 4px 0 rgba(0, 0, 0, 0.6);
+  --shadow-glow: none;
+  --shadow-gold-glow: none;
+
+  /* ---- The ChatStrip panel fill (see design-tokens.css) ---- */
+  --topbar-bg: rgba(47, 87, 79, 0.9);
+
+  /* ---- Logon screen — read from the original client's form (LogonHandlerViewer.dfm) and
+     logon.css; used only by the legacy-scoped rules in the login stylesheets ---- */
+  --legacy-font: Verdana, Tahoma, Arial, sans-serif;
+  --legacy-frame: #395850;        /* TFramedButton.FrameColor 5265721 */
+  --legacy-note: #6ba292;         /* lbWelcome / Label4 Font.Color 9609323 */
+  --legacy-list-bg: #002800;      /* WorldList.Color 10240 */
+  --legacy-list-text: #00ff00;    /* WorldList.Font.Color clLime */
+  --legacy-list-selected: #000080; /* the Windows row highlight of a RowSelect list */
+
+  /* The original intro: the Oceanus page for 70 ticks of 50 ms, then the splash until a
+     click (or 400 ticks). 8 s here, 3.5 of them on the Oceanus page; any click skips. */
+  --login-intro-ms: 8000;
+  /* The Universe Map opened with its first area loaded; here that is Free Space. */
+  --login-default-zone: free;
+
+  /* ---- Universe Map (UniversalMapViewer.dfm) ---- */
+  --legacy-umap-gradient-to: #243934; /* GradientBox1.ToColor 3422500; also the TVFilter line */
+  --legacy-umap-title: #ffffd9;       /* lbName.Font.Color 14286847 */
+  --legacy-umap-label: #5e9384;       /* Label11.Font.Color 8688478 */
+  --legacy-umap-tab-text: #609686;    /* Tabs.Font.Color 8820064 */
+  --legacy-umap-tab-selected: #f3ff95; /* Tabs.SelTextColor 9829363 */
+  --legacy-umap-panel: #20332f;       /* Panel3.Color 3093280 */
+  --legacy-ticker-bg: #0f1f1b;        /* BlockTicker.ShowBack over black */
+  --legacy-ticker-text: #0fb0a0;      /* Ticker.ForeColor 10530831 */
+  --legacy-ticker-lit: #33ffe0;       /* Ticker.LitColor 14745395 */
+}

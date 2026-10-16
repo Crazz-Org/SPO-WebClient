@@ -296,6 +296,8 @@ function evalLength(expr: string, vp: Viewport, tokens: Vars, extra: Vars = new 
 /** Custom properties that are set from TypeScript at runtime, never in a stylesheet. */
 const ALLOWED_RUNTIME = new Set<string>([
   '--path-length', // SVG stroke animation, set by the component
+  '--company-cols', // legacy company table columns, set inline by CompanyStage
+  '--map-loading-progress', // legacy world-entry gauge, set inline by MapLoadingScreen
 ]);
 
 function walk(dir: string, out: string[] = []): string[] {

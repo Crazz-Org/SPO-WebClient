@@ -12,7 +12,7 @@
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { useGameStore } from '../store';
+import { useGameStore, useUiStore } from '../store';
 import { useClient } from '../context';
 import { LoginBackground, AuthStage, AuthErrorModal, ZoneStage, WorldStage, CompanyStage } from '../components/login';
 import { config } from '@/shared/config';
@@ -29,6 +29,18 @@ function parseForceWorld(value: string | undefined): { zoneId: string; worldName
 }
 
 const forceWorldConfig = parseForceWorld(config.server.forceWorld);
+
+/**
+ * The area the region picker selects by itself, named by a theme through the
+ * `--login-default-zone` token — the legacy theme says `free`, so its Universe Map opens
+ * with Free Space loaded as the original client did. Unset (every other theme, jsdom): the
+ * picker waits for a click. Read once per LoginScreen mount.
+ */
+function defaultZoneId(): string | undefined {
+  if (typeof document === 'undefined' || typeof getComputedStyle !== 'function') return undefined;
+  const id = getComputedStyle(document.documentElement).getPropertyValue('--login-default-zone').trim();
+  return WORLD_ZONES.some((z) => z.id === id) ? id : undefined;
+}
 
 export function LoginScreen() {
   const status = useGameStore((s) => s.status);
@@ -51,11 +63,20 @@ export function LoginScreen() {
   // The chained re-entry hides the zone/world/company stages while it runs; the store
   // still advances loginStage underneath, so a failed step still lands on the right one.
   const visibleStage = resumeTarget ? 'auth' : stage;
+  // The original client never left the Universe Map to choose a company: the world's company
+  // page opened beside it. The legacy theme keeps the map up through that stage.
+  const theme = useUiStore((s) => s.theme);
+  const mapBesideCompanies = theme === 'legacy' && visibleStage === 'companies';
 
   const client = useClient();
   const [storedCreds, setStoredCreds] = useState<{ username: string; password: string } | null>(null);
   const [selectedWorld, setSelectedWorld] = useState('');
   const lastZoneRef = useRef<WorldZone | null>(null);
+  // The theme's default area, offered to the picker until a world list has arrived (the
+  // picker retries it once on a failed directory query) — never when SPO_FORCE_WORLD already
+  // drives the stages.
+  const autoZoneRef = useRef<string | undefined>(forceWorldConfig ? undefined : defaultZoneId());
+  if (stage === 'worlds' || stage === 'companies') autoZoneRef.current = undefined;
 
   // Stage A: validate credentials via RDO auth check, then advance to zones on success
   const handleConnect = useCallback(
@@ -83,6 +104,15 @@ export function LoginScreen() {
     [client, storedCreds, setLoginLoading],
   );
 
+  // The legacy Universe Map's tabs switch area in place, without the picker in between.
+  const handleZoneSelectById = useCallback(
+    (zoneId: string) => {
+      const zone = WORLD_ZONES.find((z) => z.id === zoneId);
+      if (zone) handleZoneSelect(zone);
+    },
+    [handleZoneSelect],
+  );
+
   // Stage C: retry the last directory query after an empty/failed world list
   const handleRetryWorlds = useCallback(() => {
     if (lastZoneRef.current) handleZoneSelect(lastZoneRef.current);
@@ -96,6 +126,18 @@ export function LoginScreen() {
       client.onWorldSelect(worldName);
     },
     [client, setLoginLoading],
+  );
+
+  // The map beside the company page: another world (or JUMP on this one) — never while a
+  // company is being entered
+  const handleWorldReselect = useCallback(
+    (worldName: string) => {
+      if (isLoading) return;
+      // The company creation page beside the map gives way, as the original's web view did
+      if (useUiStore.getState().modal === 'createCompany') useUiStore.getState().closeModal();
+      handleWorldSelect(worldName);
+    },
+    [isLoading, handleWorldSelect],
   );
 
   // Auto-advance zone + world stages when SPO_FORCE_WORLD is set (test phase).
@@ -154,7 +196,7 @@ export function LoginScreen() {
   }, [setLoginStage]);
 
   return (
-    <div className={styles.screen}>
+    <div className={styles.screen} data-stage={visibleStage}>
       <LoginBackground />
 
       {visibleStage === 'auth' && (
@@ -173,17 +215,22 @@ export function LoginScreen() {
         <ZoneStage
           onSelect={handleZoneSelect}
           isLoading={isLoading}
+          autoSelectZoneId={autoZoneRef.current}
         />
       )}
 
-      {visibleStage === 'worlds' && (
+      {(visibleStage === 'worlds' || mapBesideCompanies) && (
         <WorldStage
           worlds={worlds}
-          onSelect={handleWorldSelect}
+          zoneId={lastZoneRef.current?.id}
+          onSelectZone={handleZoneSelectById}
+          onSelect={mapBesideCompanies ? handleWorldReselect : handleWorldSelect}
           onBack={handleBackToZones}
           onRetry={handleRetryWorlds}
-          isLoading={isLoading}
+          // Entering with a company shows its gauge on the company page, not over the map
+          isLoading={visibleStage === 'worlds' && isLoading}
           atWorldLimit={atWorldLimit}
+          selectedWorld={mapBesideCompanies ? selectedWorld : undefined}
         />
       )}
 

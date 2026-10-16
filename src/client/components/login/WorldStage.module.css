@@ -199,6 +199,12 @@
   border-color: var(--text-muted);
 }
 
+/* The original Universe Map's chrome — rendered only by the legacy theme below. */
+.legacyTabs,
+.legacyButtons {
+  display: none;
+}
+
 /* Mobile */
 @media (max-width: 767px) {
   .stage {
@@ -208,4 +214,379 @@
   .grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* ============================================================================
+ * Legacy theme — the original client's Universe Map, measured on its form
+ * (Voyager/URLHandlers/UniversalMapViewer.dfm; the "Universe Map" header is drawn by
+ * LoginScreen.module.css). The form is 345 px wide and sits on the window's left:
+ *
+ *   Tabs        y 51, 337 × 16   TPDTabControl: strip #243934 → #395850, black tabs set
+ *               4 px down, "Small Fonts" 8 px #609686, the current one #f3ff95
+ *   Panel1      y 67, black, BorderWidth 10
+ *   Label11     (10, 10) 316 × 20   " Worlds found in this area:"   Arial 11 px #5e9384
+ *   WorldList   (10, 30) 316 wide, icon view: 64 × 64 planets (PlanetImages, 3 running
+ *               looks by index + the eclipsed one), captions MS Sans Serif bold 11 px white,
+ *               "[ECLIPSED]" under a stopped world; a focused item gets a teal frame, the
+ *               selected one a lime frame
+ *   Ticker      316 × 120 above the buttons   BlockTicker: Verdana bold 11 px #0fb0a0,
+ *               margins 7; "%s. Population: %s Investors: %s Year: %s Online: %s" for the
+ *               world under the pointer, the welcome line otherwise
+ *   Panel3      316 × 49 at the bottom, #20332f: JUMP TO PLANET (5, 11) 154 × 28 Arial bold,
+ *               REFRESH PLANET LIST (162, 11) 147 × 28 Arial — framed buttons
+ *   RightLine   1 px #395850 at x 336
+ *
+ * A click on a world enters it (the original selected, then JUMP); the tabs go back to the
+ * area picker, where ZoneStage draws the same panel with live tabs.
+ * ============================================================================ */
+
+:global([data-theme="legacy"]) .stage {
+  position: fixed;
+  top: 51px;
+  left: 0;
+  z-index: 1;
+  display: block;
+  width: 336px;
+  max-width: none;
+  height: calc(100vh - 51px);
+  padding: 0;
+  margin: 0;
+  background: #000;
+  border-right: 1px solid var(--legacy-frame);
+  font-family: var(--legacy-font);
+  animation: none;
+}
+
+/* Tabs */
+:global([data-theme="legacy"]) .legacyTabs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: flex;
+  width: 337px;
+  height: 16px;
+  box-sizing: border-box;
+  padding: 4px 1px 0;
+  gap: 2px;
+  background: linear-gradient(to bottom, var(--legacy-umap-gradient-to), var(--legacy-frame));
+  border-bottom: 1px solid var(--legacy-frame);
+  cursor: pointer;
+}
+
+:global([data-theme="legacy"]) .legacyTabs span {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 11px;
+  background: #000;
+  clip-path: polygon(5px 0, calc(100% - 5px) 0, 100% 100%, 0 100%);
+  color: var(--legacy-umap-tab-text);
+  font: 8px var(--legacy-font);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+:global([data-theme="legacy"]) .legacyTabs span:hover {
+  color: #fff;
+}
+
+:global([data-theme="legacy"]) .legacyTabs span[data-zone-tab="free"]::after { content: 'Free Space'; }
+:global([data-theme="legacy"]) .legacyTabs span[data-zone-tab="restricted"]::after { content: 'Restricted Space'; }
+:global([data-theme="legacy"]) .legacyTabs span[data-zone-tab="beta"]::after { content: 'Beta'; }
+
+:global([data-theme="legacy"]) .stage[data-zone="free"] .legacyTabs span[data-zone-tab="free"],
+:global([data-theme="legacy"]) .stage[data-zone="restricted"] .legacyTabs span[data-zone-tab="restricted"],
+:global([data-theme="legacy"]) .stage[data-zone="beta"] .legacyTabs span[data-zone-tab="beta"] {
+  color: var(--legacy-umap-tab-selected);
+}
+
+/* Label11 */
+:global([data-theme="legacy"]) .title {
+  position: absolute;
+  top: 26px;
+  left: 10px;
+  width: 316px;
+  height: 20px;
+  margin: 0;
+  padding-left: 4px;
+  box-sizing: border-box;
+  font-size: 0;
+  text-align: left;
+}
+
+:global([data-theme="legacy"]) .title::after {
+  content: attr(data-legacy-text);
+  font: 11px Arial, var(--legacy-font);
+  line-height: 20px;
+  color: var(--legacy-umap-label);
+}
+
+:global([data-theme="legacy"]) .subtitle,
+:global([data-theme="legacy"]) .backBtn,
+:global([data-theme="legacy"]) .statusBadge,
+:global([data-theme="legacy"]) .retryBtn {
+  display: none;
+}
+
+:global([data-theme="legacy"]) .limitNotice {
+  position: absolute;
+  left: 10px;
+  bottom: 182px;
+  z-index: 2;
+  width: 316px;
+  max-width: 316px;
+  margin: 0;
+  padding: 0 4px;
+  box-sizing: border-box;
+  text-align: left;
+  font: bold 10px var(--legacy-font);
+}
+
+/* WorldList — icon view */
+:global([data-theme="legacy"]) .grid {
+  position: absolute;
+  top: 46px;
+  bottom: 179px;
+  left: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0;
+  width: 316px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+:global([data-theme="legacy"]) .worldCard {
+  display: block;
+  width: 105px;
+  height: 107px;
+  padding: 4px 2px 0;
+  box-sizing: border-box;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0;
+  box-shadow: none;
+  color: #fff;
+  font: bold 11px var(--legacy-font);
+  text-align: center;
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .worldCard::before {
+  content: '';
+  display: block;
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 4px;
+  background: url(../../assets/legacy/planets.png) 0 0 no-repeat;
+}
+
+:global([data-theme="legacy"]) .worldCard:nth-child(3n+2)::before { background-position: -64px 0; }
+:global([data-theme="legacy"]) .worldCard:nth-child(3n+3)::before { background-position: -128px 0; }
+
+:global([data-theme="legacy"]) .worldCard:hover {
+  transform: none;
+  box-shadow: none;
+  border-color: teal;
+}
+
+:global([data-theme="legacy"]) .worldCard:active {
+  border-color: lime;
+}
+
+/* The world being entered, while the company page shows beside the map: framed, with its
+   line held in the ticker (a hovered world still takes the ticker over) */
+:global([data-theme="legacy"]) .selectedCard,
+:global([data-theme="legacy"]) .selectedCard:hover {
+  border-color: teal;
+}
+
+:global([data-theme="legacy"]) .selectedCard .worldStats {
+  display: flex;
+}
+
+:global([data-theme="legacy"]) .worldCard:hover .worldStats {
+  z-index: 3;
+}
+
+:global([data-theme="legacy"]) .cardHeader {
+  display: block;
+  margin: 0;
+  white-space: normal;
+  line-height: 13px;
+}
+
+:global([data-theme="legacy"]) .worldName {
+  font: inherit;
+  color: inherit;
+}
+
+:global([data-theme="legacy"]) .offlineCard {
+  opacity: 1;
+  filter: none;
+}
+
+:global([data-theme="legacy"]) .offlineCard::before {
+  background-position: -192px 0;
+}
+
+:global([data-theme="legacy"]) .offlineCard .cardHeader::after {
+  content: '[ECLIPSED]';
+  display: block;
+}
+
+:global([data-theme="legacy"]) .offlineCard .worldStats {
+  display: none;
+}
+
+/* Ticker — the welcome line, replaced by the stats of the world under the pointer */
+:global([data-theme="legacy"]) .stage::after {
+  content: 'Welcome to the Universal Map. Click on any of the worlds above to display extended information.';
+  position: absolute;
+  left: 10px;
+  bottom: 59px;
+  z-index: 1;
+  width: 316px;
+  height: 120px;
+  box-sizing: border-box;
+  padding: 7px;
+  background: var(--legacy-ticker-bg);
+  color: var(--legacy-ticker-text);
+  font: bold 11px / 15px var(--legacy-font);
+  text-align: left;
+  pointer-events: none;
+}
+
+:global([data-theme="legacy"]) .worldStats {
+  display: none;
+  position: fixed;
+  left: 10px;
+  bottom: 59px;
+  z-index: 2;
+  width: 316px;
+  height: 120px;
+  box-sizing: border-box;
+  padding: 7px;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 0 4px;
+  background: var(--legacy-ticker-bg);
+  color: var(--legacy-ticker-lit);
+  font: bold 11px / 15px var(--legacy-font);
+  text-align: left;
+  pointer-events: none;
+}
+
+:global([data-theme="legacy"]) .worldCard:hover .worldStats {
+  display: flex;
+}
+
+:global([data-theme="legacy"]) .worldStats::before {
+  content: attr(data-name) '.';
+  order: 0;
+}
+
+:global([data-theme="legacy"]) .statItem {
+  display: inline-flex;
+  flex-direction: row-reverse;
+  gap: 3px;
+}
+
+:global([data-theme="legacy"]) .statItem[data-stat="population"] { order: 1; }
+:global([data-theme="legacy"]) .statItem[data-stat="investors"]  { order: 2; }
+:global([data-theme="legacy"]) .statItem[data-stat="year"]       { order: 3; }
+:global([data-theme="legacy"]) .statItem[data-stat="online"]     { order: 4; }
+
+:global([data-theme="legacy"]) .statValue,
+:global([data-theme="legacy"]) .statLabel {
+  display: inline;
+  font: inherit;
+  color: inherit;
+}
+
+:global([data-theme="legacy"]) .statLabel::after {
+  content: ':';
+}
+
+/* The original says Investors where the card says Tycoons */
+:global([data-theme="legacy"]) .statItem[data-stat="investors"] .statLabel {
+  font-size: 0;
+}
+
+:global([data-theme="legacy"]) .statItem[data-stat="investors"] .statLabel::after {
+  content: 'Investors:';
+  font: bold 11px / 15px var(--legacy-font);
+}
+
+/* Panel3 — the framed buttons */
+:global([data-theme="legacy"]) .legacyButtons {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  z-index: 1;
+  display: block;
+  width: 316px;
+  height: 49px;
+  background: var(--legacy-umap-panel);
+}
+
+:global([data-theme="legacy"]) .legacyJump,
+:global([data-theme="legacy"]) .legacyRefresh {
+  position: absolute;
+  top: 11px;
+  height: 28px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--legacy-frame);
+  border-radius: 0;
+  color: #fff;
+  font: 11px Arial, var(--legacy-font);
+  text-align: center;
+  cursor: pointer;
+}
+
+:global([data-theme="legacy"]) .legacyJump {
+  left: 5px;
+  width: 154px;
+  font-weight: bold;
+}
+
+:global([data-theme="legacy"]) .legacyRefresh {
+  left: 162px;
+  width: 147px;
+}
+
+:global([data-theme="legacy"]) .legacyJump:hover:not(:disabled),
+:global([data-theme="legacy"]) .legacyRefresh:hover:not(:disabled) {
+  border-color: #fff;
+}
+
+:global([data-theme="legacy"]) .legacyJump:disabled,
+:global([data-theme="legacy"]) .legacyRefresh:disabled {
+  color: var(--legacy-frame);
+  cursor: default;
+}
+
+/* Empty state and the connecting overlay inside the panel */
+:global([data-theme="legacy"]) .emptyState {
+  position: absolute;
+  top: 46px;
+  left: 10px;
+  width: 316px;
+  padding: 4px;
+  box-sizing: border-box;
+  align-items: flex-start;
+  text-align: left;
+  color: var(--legacy-umap-label);
+  font: 11px Arial, var(--legacy-font);
+}
+
+:global([data-theme="legacy"]) .overlay {
+  border-radius: 0;
+  backdrop-filter: none;
+  background: rgba(0, 0, 0, 0.6);
 }

@@ -48,3 +48,91 @@
   text-transform: uppercase;
 }
 
+
+/* The original client's cover — rendered only by the legacy theme below */
+.legacyCover {
+  display: none;
+}
+
+/* ============================================================================
+ * Legacy theme — the original client's cover while it entered a world
+ * (Voyager/Cover.dfm, shown full screen by VoyagerWindow.pas until the map was up):
+ *
+ *   Backround    logonportal.jpg stretched over the whole window
+ *   WorldName    (16, 16) Times New Roman 40 px, black — the world being entered
+ *   StatusPanel  302 × 57 black, bottom-left, BorderWidth 5:
+ *     Comment      (11, 10) Arial 13 px white — the current step, "Please wait..." at first
+ *     OverallProg  (7, 31) 283 × 16 TColorGauge (ColoredGauge.pas): a 2 px bar every 6 px,
+ *                  clLime up to the position and clGreen past it (YellowPerc 100 — all green)
+ *
+ * No logo, spinner or quotes: the theme hides them.
+ * ============================================================================ */
+
+:global([data-theme="legacy"]) .root {
+  background: #000 url(../../assets/legacy/logonportal.jpg) 0 0 / 100% 100% no-repeat;
+  transition: opacity 400ms linear;
+}
+
+:global([data-theme="legacy"]) .root > :not(.legacyCover) {
+  display: none;
+}
+
+:global([data-theme="legacy"]) .legacyCover {
+  display: block;
+  position: absolute;
+  inset: 0;
+}
+
+:global([data-theme="legacy"]) .legacyWorldName {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  color: #000;
+  font: 40px / 46px 'Times New Roman', Times, serif;
+}
+
+:global([data-theme="legacy"]) .legacyStatus {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 302px;
+  height: 57px;
+  box-sizing: border-box;
+  background: #000;
+}
+
+:global([data-theme="legacy"]) .legacyMessage {
+  position: absolute;
+  top: 10px;
+  left: 11px;
+  width: 277px;
+  overflow: hidden;
+  color: #fff;
+  font: 13px / 16px Arial, sans-serif;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+:global([data-theme="legacy"]) .legacyGauge {
+  position: absolute;
+  top: 31px;
+  left: 7px;
+  width: 283px;
+  height: 16px;
+}
+
+/* the bars past the position, then the lit ones up to it */
+:global([data-theme="legacy"]) .legacyGauge::before,
+:global([data-theme="legacy"]) .legacyGauge::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(to right, transparent 0 4px, #008000 4px 6px);
+}
+
+:global([data-theme="legacy"]) .legacyGauge::after {
+  right: auto;
+  width: var(--map-loading-progress, 0%);
+  background-image: repeating-linear-gradient(to right, transparent 0 4px, #0f0 4px 6px);
+  transition: width 300ms linear;
+}

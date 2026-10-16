@@ -54,6 +54,25 @@
   gap: var(--space-3);
 }
 
+/* Each field is a <label> around its control. Its text is for assistive tech only — the
+   placeholder stays the visible hint — until the legacy theme (end of file) shows it. */
+.field {
+  display: block;
+  width: 100%;
+}
+
+.fieldLabel {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .input {
   width: 100%;
   padding: var(--space-3) var(--space-4);
@@ -246,3 +265,248 @@
 .stage.intro .logo     { animation: stageEnter 500ms var(--ease-out) both; }
 .stage.intro .tagline  { animation: stageEnter 500ms var(--ease-out) 300ms both; }
 .stage.intro .authCard { animation: stageEnter 600ms var(--ease-out) 700ms both; }
+
+/* ============================================================================
+ * Legacy theme — the original client's sign-in page, measured on its form
+ * (Voyager/URLHandlers/LogonHandlerViewer.dfm, the "Logon" page):
+ *
+ *   LogonFieldsShape   442 × 361, centred on the screen; everything below is relative to it
+ *   lbWelcome          (35, 17)  372 × 61   Verdana bold 12 px, #6ba292, wrapped
+ *   lbLogonAlias       right-aligned, ends at x 153   "Alias:"     Verdana bold 16 px, white
+ *   edLogonAlias       (161, 98)  232 × 26  white edit, Verdana bold 16 px, black
+ *   blLogonPassword / edLogonPassword   same, one row of 49 px lower
+ *   btSignIn / btNewAccount / brLogonCancel   (28 | 161 | 293, 259)  126 × 29 framed buttons:
+ *                      black fill, frame #395850, Verdana bold 11 px white; hover frame white;
+ *                      pressed white fill, black text; disabled text #395850
+ *   LogonSplashImage   signin.jpg at the screen's top-left (LoginScreen.module.css)
+ *   SplashImage        splash1024.jpg, shown alone first — here, for the intro's 1.4 s
+ *
+ * No wordmark, no tagline of its own, no card: black screen, the fields, the buttons. The
+ * language picker has no original — it takes the edits' look. Activated by
+ * <html data-theme="legacy"> (store/theme.ts); nothing here runs otherwise.
+ * ============================================================================ */
+
+:global([data-theme="legacy"]) .stage {
+  font-family: var(--legacy-font);
+  align-items: flex-start;
+  gap: 0;
+  padding: 0;
+  width: 442px;
+  max-width: 442px;
+  animation: none;
+}
+
+/* The original intro (LogonHandlerViewer.Timer1Timer, 50 ms ticks): the Oceanus page —
+   "Originally Developed by", the Oceanus Communications logo, "Presented by Starpeace
+   Online Team", Times New Roman italic 25 px grey, centred — until tick 70, then
+   splash1024.jpg until a click or tick 400. Here: 3.5 s of 8 (--login-intro-ms). */
+:global([data-theme="legacy"]) .stage[data-intro="playing"]::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  background: #000 url(../../assets/legacy/oceanus-page.png) center / auto no-repeat;
+  animation: legacyIntro 8s steps(1, end) both;
+}
+
+@keyframes legacyIntro {
+  0%, 43% {
+    background-image: url(../../assets/legacy/oceanus-page.png);
+    background-size: auto;
+  }
+  44%, 100% {
+    background-image: url(../../assets/legacy/splash1024.jpg);
+    background-size: contain;
+  }
+}
+
+:global([data-theme="legacy"]) .logo {
+  display: none;
+}
+
+:global([data-theme="legacy"]) .tagline {
+  font-size: 0;
+  letter-spacing: 0;
+  width: 372px;
+  margin: 17px 0 20px 35px;
+  text-align: left;
+  animation: none;
+}
+
+:global([data-theme="legacy"]) .tagline::after {
+  content: attr(data-legacy-text);
+  font: bold 12px / 16px var(--legacy-font);
+  color: var(--legacy-note);
+}
+
+:global([data-theme="legacy"]) .authCard {
+  display: grid;
+  grid-template-columns: 126px 126px 126px;
+  column-gap: 7px;
+  row-gap: 0;
+  width: 442px;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  animation: none;
+}
+
+:global([data-theme="legacy"]) .fieldGroup,
+:global([data-theme="legacy"]) .rememberMe,
+:global([data-theme="legacy"]) .resumeRow,
+:global([data-theme="legacy"]) .resumeStatus {
+  grid-column: 1 / -1;
+}
+
+:global([data-theme="legacy"]) .fieldGroup {
+  gap: 23px; /* 26 px edit + 23 px = the form's 49 px row pitch */
+}
+
+:global([data-theme="legacy"]) .field {
+  display: grid;
+  grid-template-columns: 153px 232px;
+  column-gap: 8px;
+  align-items: center;
+}
+
+:global([data-theme="legacy"]) .fieldLabel {
+  position: static;
+  width: auto;
+  height: auto;
+  margin: 0;
+  clip: auto;
+  overflow: visible;
+  font-size: 0;
+  text-align: right;
+}
+
+:global([data-theme="legacy"]) .fieldLabel::after {
+  content: attr(data-legacy-text);
+  font: bold 16px var(--legacy-font);
+  color: #fff;
+}
+
+:global([data-theme="legacy"]) .input,
+:global([data-theme="legacy"]) .languageSelect {
+  width: 232px;
+  height: 26px;
+  padding: 0 4px;
+  background: #fff;
+  border: 1px solid #000;
+  border-radius: 0;
+  color: #000;
+  font: bold 16px var(--legacy-font);
+  box-shadow: none;
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .input:focus,
+:global([data-theme="legacy"]) .languageSelect:focus {
+  border-color: #000;
+  box-shadow: none;
+}
+
+:global([data-theme="legacy"]) .input::placeholder {
+  color: transparent;
+}
+
+/* Keyboard focus keeps a ring (design-tokens.test.ts) — the dotted one of a Windows edit. */
+:global([data-theme="legacy"]) .input:focus-visible,
+:global([data-theme="legacy"]) .languageSelect:focus-visible {
+  outline: 1px dotted #fff;
+  outline-offset: 1px;
+}
+
+:global([data-theme="legacy"]) .rememberMe {
+  margin: 12px 0 0 161px;
+  color: var(--legacy-note);
+  font: bold 12px var(--legacy-font);
+}
+
+:global([data-theme="legacy"]) .resumeRow {
+  margin: 12px 0 0 28px;
+}
+
+:global([data-theme="legacy"]) .resumeStatus {
+  margin: 12px 0 0 35px;
+  color: var(--legacy-note);
+  font: bold 12px var(--legacy-font);
+  text-align: left;
+}
+
+/* The framed buttons — SIGN IN in the first column, NEW ACCOUNT in the second, both one
+   form row (86 px) under the password edit. */
+:global([data-theme="legacy"]) .connectBtn,
+:global([data-theme="legacy"]) .registerLink,
+:global([data-theme="legacy"]) .resumeBtn,
+:global([data-theme="legacy"]) .forgetBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 29px;
+  padding: 0 4px;
+  background: #000;
+  border: 1px solid var(--legacy-frame);
+  border-radius: 0;
+  color: #fff;
+  font: bold 11px var(--legacy-font);
+  letter-spacing: 0;
+  text-decoration: none;
+  cursor: pointer;
+  transition: none;
+}
+
+:global([data-theme="legacy"]) .connectBtn {
+  grid-column: 1;
+  width: 126px;
+  margin: 86px 0 0 28px;
+  font-size: 0;
+}
+
+:global([data-theme="legacy"]) .registerLink {
+  grid-column: 2;
+  align-self: start;
+  width: 126px;
+  margin: 86px 0 0 28px;
+  font-size: 0;
+}
+
+:global([data-theme="legacy"]) .connectBtn::after,
+:global([data-theme="legacy"]) .registerLink::after {
+  content: attr(data-legacy-text);
+  font: bold 11px var(--legacy-font);
+}
+
+:global([data-theme="legacy"]) .connectBtn:hover:not(:disabled),
+:global([data-theme="legacy"]) .registerLink:hover,
+:global([data-theme="legacy"]) .resumeBtn:hover,
+:global([data-theme="legacy"]) .forgetBtn:hover {
+  border-color: #fff;
+  color: #fff;
+  opacity: 1;
+  box-shadow: none;
+  transform: none;
+}
+
+:global([data-theme="legacy"]) .connectBtn:active:not(:disabled),
+:global([data-theme="legacy"]) .registerLink:active,
+:global([data-theme="legacy"]) .resumeBtn:active {
+  background: #fff;
+  color: #000;
+  transform: none;
+}
+
+:global([data-theme="legacy"]) .connectBtn:disabled {
+  opacity: 1;
+  color: var(--legacy-frame);
+  cursor: default;
+}
+
+:global([data-theme="legacy"]) .version {
+  font-family: var(--legacy-font);
+}

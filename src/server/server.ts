@@ -448,6 +448,7 @@ const server = http.createServer(async (req, res) => {
       bugReport: config.server.bugReportMode,
       bugReportPlayerMode: config.server.bugReportPlayerMode,
       registerUrl: config.server.registerUrl,
+      theme: config.server.theme,
     });
     res.writeHead(200, {
       'Content-Type': 'text/javascript',
@@ -831,8 +832,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // Map URL to local file
-  let filePath = path.join(PUBLIC_DIR, safePath);
+  // Map URL to local file. The query string is no part of the file name: `/?theme=legacy`
+  // (a channel's default theme, src/client/store/theme.ts) is index.html exactly as `/` is.
+  const staticPath = ((): string => {
+    const pathname = safePath.split('?')[0];
+    return pathname === '' || pathname === '/' ? '/index.html' : pathname;
+  })();
+  let filePath = path.join(PUBLIC_DIR, staticPath);
 
   // Prevent directory traversal — normalize and verify the resolved path stays within PUBLIC_DIR
   const normalizedPublicPath = path.normalize(filePath);
@@ -843,7 +849,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // If requesting the JS bundle
-  if (safePath === '/client.js') {
+  if (staticPath === '/client.js') {
     filePath = path.join(PUBLIC_DIR, 'client.js');
   }
 
@@ -870,7 +876,7 @@ const server = http.createServer(async (req, res) => {
       // the /cdn/ proxy when CHUNK_CDN_URL is overridden, or a registration URL is configured.
       // Uses an external script (CSP-compliant) instead of inline script.
       // In Docker/default mode, config.cdn.url is the default and no injection occurs.
-      if (config.cdn.url !== 'https://spo.zz.works' || config.server.forceWorld || config.server.bugReportMode || config.server.registerUrl) {
+      if (config.cdn.url !== 'https://spo.zz.works' || config.server.forceWorld || config.server.bugReportMode || config.server.registerUrl || config.server.theme) {
         const injection = `<script src="/spo-runtime-config.js"></script>`;
         html = html.replace('</head>', `${injection}</head>`);
       }
@@ -882,7 +888,7 @@ const server = http.createServer(async (req, res) => {
       res.end(html, 'utf-8');
     } else {
       // Hashed assets (assets/*) get immutable long-cache; other static files get no-cache
-      const isHashedAsset = safePath.startsWith('/assets/');
+      const isHashedAsset = staticPath.startsWith('/assets/');
       const cacheControl = isHashedAsset
         ? 'public, max-age=31536000, immutable'
         : 'no-cache';
